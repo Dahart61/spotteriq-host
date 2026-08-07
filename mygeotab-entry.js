@@ -395,16 +395,19 @@
         result && result.viewModels || []
       );
       if (result && result.ok) {
+        var authorizedDeviceCount = Array.isArray(result.deviceIds)
+          ? result.deviceIds.length
+          : Array.isArray(result.viewModels) ? result.viewModels.length : 0;
         preparePerformance(api, result);
         logger.info("effective authorized asset count", {
-          count: result.deviceIds.length
+          count: authorizedDeviceCount
         });
         var gaps = stats.unresolved === "None" ? [] : stats.unresolved.split(", ");
         if (gaps.length) {
           logger.info("diagnostic mapping gaps", { count: gaps.length });
         }
         updateCommissioning({
-          authorizedDeviceCount: result.deviceIds.length,
+          authorizedDeviceCount: authorizedDeviceCount,
           activeShift: result.shiftOccurrence
             ? result.shiftOccurrence.occurrenceId
             : result.shiftStatus === "SHIFT_SCHEDULE_NOT_CONFIGURED"
