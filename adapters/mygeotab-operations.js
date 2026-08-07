@@ -87,6 +87,7 @@
   var DEFAULT_ENGINE_ON_RPM_THRESHOLD = 400;
   var DEFAULT_MOVEMENT_THRESHOLD_MPH = 2;
   var DEFAULT_SIGNAL_FRESHNESS_MS = 120000;
+  var SPOTTERIQ_COMMUNICATION_RETENTION_MS = 72 * 60 * 60 * 1000;
   var STATE_LABELS = Object.freeze({
     COUPLED_MOVING: "Coupled Moving",
     BOBTAIL_MOVING: "Bobtail Moving",
@@ -97,8 +98,8 @@
     ENGINE_ON_STATIONARY: "Engine On — Stationary",
     KEY_ON_ENGINE_NOT_RUNNING: "Key On — Engine Not Running",
     MOVING: "Moving",
-    IDLING: "Idling",
-    OFF: "Off",
+    IDLING: "Engine Running · Stationary",
+    OFF: "Engine Off",
     KEY_ON: "Key On",
     STOPPED: "Stopped",
     UNAVAILABLE: "Unavailable",
@@ -316,23 +317,41 @@
       value: statusInfo && typeof statusInfo.isDriving === "boolean"
         ? statusInfo.isDriving : null
     };
-    var unavailableMs = facility && facility.communicationFreshness
-      && facility.communicationFreshness.staleMs;
-    if (!Number.isFinite(unavailableMs) || unavailableMs <= 0) {
-      unavailableMs = 15 * 60 * 1000;
+    var communicationKnown = statusInfo
+      && typeof statusInfo.isCommunicating === "boolean";
+    var communicationWithinRetention = communicationKnown
+      && statusAgeMs >= 0
+      && statusAgeMs < SPOTTERIQ_COMMUNICATION_RETENTION_MS;
+    var communicating = communicationWithinRetention
+      && statusInfo.isCommunicating === true;
+    var recentlyNonCommunicating = communicationWithinRetention
+      && statusInfo.isCommunicating === false;
+
+    function signalAgeMs(signal) {
+      var timestamp = Date.parse(signal && signal.timestamp);
+      return Number.isFinite(timestamp) && nowMs >= timestamp
+        ? nowMs - timestamp : Infinity;
     }
 
-    function trusted(signal) {
-      var timestamp = Date.parse(signal && signal.timestamp);
-      return Boolean(signal && signal.available && Number.isFinite(timestamp)
-        && nowMs >= timestamp && nowMs - timestamp < unavailableMs);
+    function retainedSignalIsTrusted(signal) {
+      if (!signal || !signal.available || !communicationWithinRetention) {
+        return false;
+      }
+      if (communicating) {
+        return Number.isFinite(signalAgeMs(signal));
+      }
+      return recentlyNonCommunicating
+        && signalAgeMs(signal) < SPOTTERIQ_COMMUNICATION_RETENTION_MS;
     }
 
     function retainedIsTrusted() {
       var retainedAt = retainedState && Date.parse(retainedState.evidenceAt);
-      return Boolean(retainedState && STATE_LABELS[retainedState.state]
-        && Number.isFinite(retainedAt) && nowMs >= retainedAt
-        && nowMs - retainedAt < unavailableMs);
+      if (!retainedState || ["IDLING", "OFF"].indexOf(retainedState.state) === -1
+        || !communicationWithinRetention || !Number.isFinite(retainedAt)
+        || nowMs < retainedAt) {
+        return false;
+      }
+      return communicating || nowMs - retainedAt < SPOTTERIQ_COMMUNICATION_RETENTION_MS;
     }
 
     function evidenceAt(signals, fallback) {
@@ -360,9 +379,13 @@
       };
     }
 
-    var freshMoving = speed.fresh
+    if (communicationKnown && !communicationWithinRetention) {
+      return result("UNAVAILABLE", null);
+    }
+
+    var freshMoving = statusInfo && statusInfo.isCommunicating !== false && (speed.fresh
       ? speed.value >= DEFAULT_MOVEMENT_THRESHOLD_MPH
-      : driving.fresh && driving.value === true;
+      : driving.fresh && driving.value === true);
     var freshStationary = speed.fresh
       ? speed.value < DEFAULT_MOVEMENT_THRESHOLD_MPH
       : driving.fresh && driving.value === false;
@@ -380,8 +403,18 @@
       if (ignition.fresh && ignition.value === false) {
         return result("OFF", evidenceAt([speed, ignition, rpm.fresh ? rpm : null]));
       }
-      if (trusted(rpm) && rpm.value >= DEFAULT_ENGINE_ON_RPM_THRESHOLD) {
+      if (retainedSignalIsTrusted(rpm)
+        && rpm.value >= DEFAULT_ENGINE_ON_RPM_THRESHOLD) {
         return result("IDLING", evidenceAt([speed, rpm]));
+      }
+      if (retainedSignalIsTrusted(ignition) && ignition.value === false
+        && (!retainedSignalIsTrusted(rpm)
+          || rpm.value < DEFAULT_ENGINE_ON_RPM_THRESHOLD)) {
+        return result("OFF", evidenceAt([speed, ignition, rpm]));
+      }
+      if (retainedSignalIsTrusted(rpm)
+        && rpm.value < DEFAULT_ENGINE_ON_RPM_THRESHOLD) {
+        return result("OFF", evidenceAt([speed, rpm]));
       }
       if (retainedIsTrusted() && retainedState.state === "IDLING" && !rpm.fresh) {
         return result("IDLING", retainedState.evidenceAt);
@@ -403,27 +436,19 @@
       return result("OFF", evidenceAt([ignition, rpm]));
     }
 
-    var trustedMoving = trusted(speed)
-      ? speed.value >= DEFAULT_MOVEMENT_THRESHOLD_MPH
-      : trusted(driving) && driving.value === true;
-    var trustedStationary = trusted(speed)
+    var trustedStationary = retainedSignalIsTrusted(speed)
       ? speed.value < DEFAULT_MOVEMENT_THRESHOLD_MPH
-      : trusted(driving) && driving.value === false;
-    if (trustedMoving) {
-      return result("MOVING", evidenceAt([
-        trusted(speed) ? speed : null,
-        !trusted(speed) && trusted(driving) ? driving : null
-      ]));
-    }
-    if (trustedStationary && trusted(rpm)
+      : retainedSignalIsTrusted(driving) && driving.value === false;
+    if (trustedStationary && retainedSignalIsTrusted(rpm)
       && rpm.value >= DEFAULT_ENGINE_ON_RPM_THRESHOLD) {
       return result("IDLING", evidenceAt([speed, rpm]));
     }
-    if (trustedStationary && trusted(ignition) && ignition.value === false
-      && (!trusted(rpm) || rpm.value < DEFAULT_ENGINE_ON_RPM_THRESHOLD)) {
+    if (retainedSignalIsTrusted(ignition) && ignition.value === false
+      && (!retainedSignalIsTrusted(rpm)
+        || rpm.value < DEFAULT_ENGINE_ON_RPM_THRESHOLD)) {
       return result("OFF", evidenceAt([speed, ignition]));
     }
-    if (trustedStationary && trusted(rpm)
+    if (trustedStationary && retainedSignalIsTrusted(rpm)
       && rpm.value < DEFAULT_ENGINE_ON_RPM_THRESHOLD) {
       return result("OFF", evidenceAt([speed, rpm]));
     }
@@ -515,12 +540,16 @@
   function operatingModePresentation(current, trailer, capable) {
     var base = current && STATE_LABELS[current.state]
       ? STATE_LABELS[current.state] : STATE_LABELS.UNAVAILABLE;
-    if (!capable || base === STATE_LABELS.UNAVAILABLE
-      || !trailer || trailer.state === normalization.FIFTH_WHEEL_STATES.UNKNOWN) {
-      return base;
+    return base;
+  }
+
+  function operatingModeQualifier(trailer, capable) {
+    if (!capable || !trailer
+      || trailer.state === normalization.FIFTH_WHEEL_STATES.UNKNOWN) {
+      return null;
     }
-    return base + (trailer.state === normalization.FIFTH_WHEEL_STATES.COUPLED
-      ? " w/ Trailer" : " Bobtail");
+    return trailer.state === normalization.FIFTH_WHEEL_STATES.COUPLED
+      ? "w/ Trailer" : "Bobtail";
   }
 
   function fifthWheelConfigured(enrollment) {
@@ -647,8 +676,12 @@
     }
     var ageMs = Math.max(0, nowMs - Date.parse(statusInfo.timestamp));
     if (statusInfo.isCommunicating === false) {
-      if (ageMs >= 7 * 24 * 60 * 60 * 1000) {
-        return { condition: "OFFLINE_7_PLUS", label: "Offline 7+ Days", ageMs: ageMs };
+      if (ageMs >= SPOTTERIQ_COMMUNICATION_RETENTION_MS) {
+        return {
+          condition: "OFFLINE_72_HOURS",
+          label: "Offline 72+ Hours",
+          ageMs: ageMs
+        };
       }
       return {
         condition: "NOT_COMMUNICATING",
@@ -668,7 +701,7 @@
 
   function warningFor(timelineResult, moveResult, communication) {
     if (communication.condition === "NOT_COMMUNICATING"
-      || communication.condition === "OFFLINE_7_PLUS") {
+      || communication.condition === "OFFLINE_72_HOURS") {
       return {
         code: "NOT_COMMUNICATING",
         message: communication.label,
@@ -719,7 +752,7 @@
     );
     var warningCode = current.delayed ? "LAST_KNOWN_STATE_DELAYED"
       : current.state === "UNAVAILABLE" ? "CURRENT_STATE_UNAVAILABLE"
-        : ["DELAYED", "STALE", "NOT_COMMUNICATING", "OFFLINE_7_PLUS"]
+        : ["DELAYED", "STALE", "NOT_COMMUNICATING", "OFFLINE_72_HOURS"]
           .indexOf(communication.condition) !== -1
           ? "TELEMETRY_" + communication.condition : null;
     return Object.assign({
@@ -743,6 +776,9 @@
       operationalState: current.state,
       operationalStateLabel: operatingModePresentation(
         current, trailer, trailer.supported
+      ),
+      operationalStateQualifierLabel: operatingModeQualifier(
+        trailer, trailer.supported
       ),
       operationalStateDelayed: current.delayed,
       operationalStateEvidenceAt: current.evidenceAt,
@@ -1005,6 +1041,9 @@
       operationalState: state,
       operationalStateLabel: operatingModePresentation(
         current, trailer, hasFifthWheel
+      ),
+      operationalStateQualifierLabel: operatingModeQualifier(
+        trailer, hasFifthWheel
       ),
       operationalStateEvidenceAt: current.evidenceAt,
       engineRunning: current.engineRunning,
@@ -1539,6 +1578,7 @@
     FIFTH_WHEEL_LABELS: FIFTH_WHEEL_LABELS,
     FUEL_DEF_CHANNELS: FUEL_DEF_CHANNELS,
     OPERATIONAL_CHANNELS: OPERATIONAL_CHANNELS,
+    SPOTTERIQ_COMMUNICATION_RETENTION_MS: SPOTTERIQ_COMMUNICATION_RETENTION_MS,
     STATE_LABELS: STATE_LABELS,
     buildViewModel: buildViewModel,
     communicationPresentation: communicationPresentation,
@@ -1552,6 +1592,7 @@
     engineRunningValue: engineRunningValue,
     fifthWheelConfigured: fifthWheelConfigured,
     operatingModePresentation: operatingModePresentation,
+    operatingModeQualifier: operatingModeQualifier,
     mergeRecords: mergeRecords,
     sourceTelemetry: sourceTelemetry
   };

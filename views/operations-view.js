@@ -18,6 +18,7 @@
     "nativeDisplayName",
     "operationalState",
     "operationalStateLabel",
+    "operationalStateQualifierLabel",
     "completedMoves",
     "stateStartedAt",
     "stateDurationMs",
@@ -85,7 +86,7 @@
         return model.operationalState === "OFF";
       }).length,
       withTrailer: source.filter(function (model) {
-        return / w\/ Trailer$/.test(model.operationalStateLabel || "");
+        return model.operationalStateQualifierLabel === "w/ Trailer";
       }).length,
       completedMoves: source.reduce(function (total, model) {
         return total + (Number.isFinite(model.completedMoves) ? model.completedMoves : 0);
@@ -356,6 +357,14 @@
       refs.faultIndicator.setAttribute("aria-label", refs.faultIndicator.title);
     }
 
+    function updateStatePresentation(refs, model) {
+      refs.operationalStatePrimaryLabel.textContent = model.operationalStateLabel;
+      refs.operationalStateQualifierLabel.textContent =
+        model.operationalStateQualifierLabel || "";
+      refs.operationalStateQualifierLabel.hidden =
+        !model.operationalStateQualifierLabel;
+    }
+
     function createRow(model) {
       var row = element("button", "siq-unit-row siq-unit-row--" + stateKey(model));
       var refs = { row: row };
@@ -383,7 +392,18 @@
       var stateCell = element("span", "siq-state-cell");
       var rail = element("span", "siq-state-rail");
       rail.setAttribute("aria-hidden", "true");
-      refs.operationalStateLabel = element("span", "siq-state-text", model.operationalStateLabel);
+      refs.operationalStateLabel = element("span", "siq-state-text");
+      refs.operationalStatePrimaryLabel = element(
+        "strong", "siq-state-text__primary", ""
+      );
+      refs.operationalStateQualifierLabel = element(
+        "span", "siq-state-text__qualifier", ""
+      );
+      refs.operationalStateLabel.append(
+        refs.operationalStatePrimaryLabel,
+        refs.operationalStateQualifierLabel
+      );
+      updateStatePresentation(refs, model);
       refs.stateDurationMs = element("span", "siq-state-duration",
         Number.isFinite(model.stateDurationMs) ? formatDuration(model.stateDurationMs) : "");
       stateCell.append(rail, refs.operationalStateLabel, refs.stateDurationMs);
@@ -434,6 +454,8 @@
       refs.row.setAttribute(
         "aria-label",
         model.displayName + ", " + model.operationalStateLabel
+          + (model.operationalStateQualifierLabel
+            ? ", " + model.operationalStateQualifierLabel : "")
           + (model.warningMessage ? ", " + model.warningMessage : "")
       );
     }
@@ -443,6 +465,10 @@
       if (field === "operationalState") {
         refs.row.className = "siq-unit-row siq-unit-row--" + stateKey(model)
           + (model.deviceId === selectedDeviceId ? " siq-unit-row--selected" : "");
+      } else if (field === "operationalStateLabel"
+        || field === "operationalStateQualifierLabel") {
+        updateStatePresentation(refs, model);
+        flash(refs.operationalStateLabel);
       } else if (field === "stateDurationMs") {
         refs.stateDurationMs.textContent = Number.isFinite(value) ? formatDuration(value) : "";
         flash(refs.stateDurationMs);
@@ -618,9 +644,21 @@
       content.replaceChildren();
       var state = element("div", "siq-detail-state siq-detail-state--" + stateKey(model));
       detailRefs.stateBlock = state;
-      detailRefs.operationalStateLabel = element("strong", "", model.operationalStateLabel);
+      var stateText = element("span", "siq-state-text");
+      detailRefs.operationalStateLabel = element(
+        "strong", "siq-state-text__primary", model.operationalStateLabel
+      );
+      detailRefs.operationalStateQualifierLabel = element(
+        "span", "siq-state-text__qualifier", model.operationalStateQualifierLabel || ""
+      );
+      detailRefs.operationalStateQualifierLabel.hidden =
+        !model.operationalStateQualifierLabel;
+      stateText.append(
+        detailRefs.operationalStateLabel,
+        detailRefs.operationalStateQualifierLabel
+      );
       detailRefs.stateDurationMs = element("span", "", "");
-      state.append(element("span", "siq-state-rail"), detailRefs.operationalStateLabel,
+      state.append(element("span", "siq-state-rail"), stateText,
         detailRefs.stateDurationMs);
 
       var metrics = element("div", "siq-detail-metrics");
@@ -686,6 +724,11 @@
       byId("siq-detail-title").textContent = model.displayName;
       byId("siq-detail-title").title = identityTitle(model);
       set("operationalStateLabel", model.operationalStateLabel);
+      set("operationalStateQualifierLabel", model.operationalStateQualifierLabel || "");
+      if (detailRefs.operationalStateQualifierLabel) {
+        detailRefs.operationalStateQualifierLabel.hidden =
+          !model.operationalStateQualifierLabel;
+      }
       set("stateDurationMs", Number.isFinite(model.stateDurationMs)
         ? formatDuration(model.stateDurationMs) : "");
       set("currentSpeedMph", formatNumber(model.currentSpeedMph, " mph", 1));

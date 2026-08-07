@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SpotterIQ by Fleetsource</title>
-  <link rel="stylesheet" href="styles.css?v=4.0.0-wo4">
+  <link rel="stylesheet" href="styles.css?v=4.0.0-comm1">
 </head>
 <body>
   <div class="siq-app" data-theme="dark">
@@ -130,11 +130,11 @@
             <span class="siq-kpi__detail" id="siq-kpi-unit-detail">0 units in this facility</span>
           </div>
           <div class="siq-kpi">
-            <span class="siq-kpi__label">Idling</span>
+            <span class="siq-kpi__label">Engine Running · Stationary</span>
             <span class="siq-kpi__value" id="siq-kpi-idling-value">0</span>
           </div>
           <div class="siq-kpi">
-            <span class="siq-kpi__label">Off</span>
+            <span class="siq-kpi__label">Engine Off</span>
             <span class="siq-kpi__value" id="siq-kpi-off-value">0</span>
           </div>
           <div class="siq-kpi">
@@ -157,8 +157,8 @@
               <div class="siq-board-filters" role="group" aria-label="Unit board filters">
                 <button class="siq-filter-button siq-filter-button--active" type="button" data-board-filter="all" aria-pressed="true">All states</button>
                 <button class="siq-filter-button" type="button" data-board-filter="moving" aria-pressed="false">Moving</button>
-                <button class="siq-filter-button" type="button" data-board-filter="idling" aria-pressed="false">Idling</button>
-                <button class="siq-filter-button" type="button" data-board-filter="off" aria-pressed="false">Off</button>
+                <button class="siq-filter-button" type="button" data-board-filter="idling" aria-pressed="false">Engine Running · Stationary</button>
+                <button class="siq-filter-button" type="button" data-board-filter="off" aria-pressed="false">Engine Off</button>
                 <button class="siq-filter-button" type="button" data-board-filter="coupled" aria-pressed="false">Trailer Coupled</button>
               </div>
             </div>
@@ -540,11 +540,11 @@
   <script src="core/asset-profile-config.js"></script>
   <script src="adapters/mygeotab-configuration.js"></script>
   <script src="adapters/addin-data-config.js"></script>
-  <script src="adapters/mygeotab-operations.js?v=4.0.0-wo3"></script>
+  <script src="adapters/mygeotab-operations.js?v=4.0.0-comm1"></script>
   <script src="adapters/mygeotab-performance.js?v=4.0.0-wo3"></script>
   <script src="controllers/operations-controller.js?v=4.0.0-resume2"></script>
   <script src="controllers/performance-controller.js?v=4.0.0-wo4"></script>
-  <script src="views/operations-view.js?v=4.0.0-rs1"></script>
+  <script src="views/operations-view.js?v=4.0.0-comm1"></script>
   <script src="views/performance-view.js?v=4.0.0-wo4"></script>
   <script src="views/commissioning-diagnostics.js"></script>
   <script src="app.js?v=4.0.0-rs1"></script>

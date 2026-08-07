@@ -1099,8 +1099,20 @@
 }
 
 .siq-state-text {
+  display: grid;
+  gap: 2px;
   min-width: 0;
+  line-height: 1.15;
+}
+
+.siq-state-text__primary {
   font-weight: 800;
+}
+
+.siq-state-text__qualifier {
+  color: var(--siq-muted);
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .siq-state-text,
