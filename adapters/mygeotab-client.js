@@ -18,7 +18,7 @@
 ) {
   "use strict";
 
-  var FIFTH_WHEEL_CAPABILITY_GROUP_NAME = "SpotterIQ - Fifth Wheel Equipped";
+  var FIFTH_WHEEL_CAPABILITY_GROUP_NAME = "Fifth Wheel Sensor Equipped";
 
   function call(api, method, params) {
     return new Promise(function (resolve, reject) {
@@ -139,8 +139,7 @@
       var groups = groupResults[0] || [];
       capabilityGroup = exactNamedGroup(
         groups,
-        facility.fifthWheelCapabilityGroupName
-          || FIFTH_WHEEL_CAPABILITY_GROUP_NAME
+        FIFTH_WHEEL_CAPABILITY_GROUP_NAME
       );
     } catch (error) {
       capabilityGroup = null;
