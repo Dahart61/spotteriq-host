@@ -5,14 +5,17 @@
     ? require("../core/shift-performance") : root.SIQ_SHIFT_PERFORMANCE;
   var performanceAdapter = typeof module === "object" && module.exports
     ? require("../adapters/mygeotab-performance") : root.SIQ_MYGEOTAB_PERFORMANCE;
-  var api = factory(shiftPerformance, performanceAdapter);
+  var timezone = typeof module === "object" && module.exports
+    ? require("../core/timezone") : root.SIQ_TIMEZONE;
+  var api = factory(shiftPerformance, performanceAdapter, timezone);
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   }
   root.SIQ_PERFORMANCE_CONTROLLER = api;
 }(typeof globalThis !== "undefined" ? globalThis : this, function (
   shiftPerformance,
-  performanceAdapter
+  performanceAdapter,
+  timezone
 ) {
   "use strict";
 
@@ -25,8 +28,26 @@
     var inFlightSelectionKey = null;
     var cache = new Map();
     var lastSelection = null;
+    var now = typeof options.now === "function" ? options.now : Date.now;
     var onApplied = typeof options.onApplied === "function"
       ? options.onApplied : function () {};
+
+    function pad2(value) {
+      return String(value).padStart(2, "0");
+    }
+
+    function todaySoFarSelection(nowMs, timeZone) {
+      var parts = timezone.zonedParts(nowMs, timeZone, false);
+      var localDate = parts.year + "-" + pad2(parts.month) + "-" + pad2(parts.day);
+      return {
+        custom: {
+          startDate: localDate,
+          startTime: "00:00",
+          endDate: localDate,
+          endTime: pad2(parts.hour) + ":" + pad2(parts.minute)
+        }
+      };
+    }
 
     function deviceKey(devices) {
       return (devices || []).map(function (device) {
@@ -47,17 +68,15 @@
       if (!context || !context.api || !context.facility || !context.devices.length) {
         return Promise.resolve(null);
       }
-      if (selection) {
-        lastSelection = selection;
-      }
-      if (!lastSelection) {
+      var candidateSelection = selection || lastSelection;
+      if (!candidateSelection) {
         view.showError("Choose a start and end date and time, then load the report");
         return Promise.resolve(null);
       }
       var selectionKey = [
         context.facility.id,
         deviceKey(context.devices),
-        JSON.stringify(lastSelection)
+        JSON.stringify(candidateSelection)
       ].join("::");
       if (inFlight && inFlightSelectionKey === selectionKey) {
         return inFlight;
@@ -65,12 +84,13 @@
       var window;
       try {
         window = shiftPerformance.resolveWindow(
-          lastSelection, Date.now(), context.facility.timezone
+          candidateSelection, now(), context.facility.timezone
         );
       } catch (error) {
         view.showError(error.message);
         return Promise.resolve(null);
       }
+      lastSelection = candidateSelection;
       var key = cacheKey(window);
       if (!force && cache.has(key)) {
         view.render(cache.get(key), context);
@@ -128,8 +148,22 @@
         view.setContext(context);
       },
       load: load,
-      open: function () { return Promise.resolve(null); },
-      refresh: function () { return load(lastSelection, true); },
+      open: function () {
+        if (!context || !context.facility) {
+          return Promise.resolve(null);
+        }
+        if (!lastSelection) {
+          var initialSelection = todaySoFarSelection(
+            now(), context.facility.timezone
+          );
+          if (typeof view.setSelection === "function") {
+            view.setSelection(initialSelection);
+          }
+          return load(initialSelection, false);
+        }
+        return Promise.resolve(null);
+      },
+      refresh: function () { return load(null, true); },
       snapshot: function () {
         return {
           generation: generation,

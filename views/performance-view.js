@@ -69,20 +69,14 @@
       if (!context) { return; }
       byId("siq-performance-timezone").textContent = context.facility.timezone;
       byId("siq-performance-facility").textContent = context.facility.displayName;
-      var dateParts = new Intl.DateTimeFormat("en-CA", {
-        timeZone: context.facility.timezone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit"
-      }).formatToParts(new Date()).reduce(function (result, part) {
-        result[part.type] = part.value;
-        return result;
-      }, {});
-      var today = dateParts.year + "-" + dateParts.month + "-" + dateParts.day;
-      if (!byId("siq-performance-start-date").value) {
-        byId("siq-performance-start-date").value = today;
-        byId("siq-performance-end-date").value = today;
-      }
+    }
+
+    function setSelection(selection) {
+      var custom = selection && selection.custom || {};
+      byId("siq-performance-start-date").value = custom.startDate || "";
+      byId("siq-performance-start-time").value = custom.startTime || "";
+      byId("siq-performance-end-date").value = custom.endDate || "";
+      byId("siq-performance-end-time").value = custom.endTime || "";
     }
 
     function metric(label, value, detail) {
@@ -204,6 +198,7 @@
       bind: bind,
       render: render,
       setContext: setContext,
+      setSelection: setSelection,
       showError: function (message) {
         byId("siq-performance-status").textContent = message;
       },
