@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SpotterIQ by Fleetsource V4 Visual Foundation</title>
+  <link rel="stylesheet" href="styles.css?v=4.0.0-wo3">
+</head>
+<body>
+  <div class="siq-app" data-theme="dark">
+    <a class="siq-skip-link" href="#siq-main">Skip to main content</a>
+
+    <header class="siq-workspace-header">
+      <div class="siq-command-bar" aria-label="SpotterIQ workspace command bar">
+        <div class="siq-brand-block">
+          <div class="siq-brand-mark" aria-hidden="true">IQ</div>
+          <div class="siq-brand-copy">
+            <div class="siq-brand-name">SpotterIQ by Fleetsource</div>
+            <div class="siq-brand-context" id="siq-brand-context" hidden>
+              <span id="siq-brand-customer-name"></span>
+              <span aria-hidden="true">/</span>
+              <span id="siq-brand-facility-name"></span>
+            </div>
+          </div>
+        </div>
+
+        <nav class="siq-primary-nav" aria-label="Primary modules">
+          <button class="siq-nav-button siq-nav-button--active" type="button" data-module="operations" aria-current="page">Operations</button>
+          <button class="siq-nav-button" type="button" data-module="performance">Performance</button>
+          <button class="siq-nav-button" type="button" data-module="reports">Reports</button>
+          <button class="siq-nav-button siq-nav-button--secondary" type="button" data-module="settings" id="siq-settings-button" hidden>Settings</button>
+        </nav>
+
+        <div class="siq-command-actions" aria-label="Fleet freshness and display controls">
+          <div class="siq-refresh-cluster">
+            <div>
+              <div class="siq-refresh-status" id="siq-refresh-status">
+                <span class="siq-live-dot" aria-hidden="true"></span>
+                <span id="siq-live-label">LIVE fixture</span>
+              </div>
+              <div class="siq-refresh-meta">
+                <span id="siq-data-age">Data age 22s</span>
+                <span id="siq-last-checked">Checked 14:16</span>
+                <span id="siq-latest-fleet-data">Latest Fleet Data --</span>
+              </div>
+            </div>
+            <button class="siq-button siq-button--primary" type="button" id="siq-refresh-button">Refresh</button>
+          </div>
+
+          <button class="siq-theme-toggle" type="button" id="siq-theme-toggle" aria-label="Switch to light theme" aria-pressed="false">
+            <span class="siq-theme-toggle__track" aria-hidden="true">
+              <span class="siq-theme-toggle__thumb"></span>
+            </span>
+            <span id="siq-theme-label">Dark</span>
+          </button>
+        </div>
+      </div>
+
+      <section class="siq-fixture-preview" aria-labelledby="siq-fixture-preview-title">
+        <div class="siq-fixture-preview__heading">
+          <h2 id="siq-fixture-preview-title">Fixture Preview</h2>
+          <span>Role and authorization simulation</span>
+        </div>
+        <div class="siq-access-controls">
+          <div class="siq-field siq-field--compact">
+            <label for="siq-user-selector">Preview User</label>
+            <select id="siq-user-selector" name="previewUser"></select>
+          </div>
+          <div class="siq-field siq-field--compact" id="siq-customer-selector-wrap" hidden>
+            <label for="siq-customer-selector">Customer</label>
+            <select id="siq-customer-selector" name="customer"></select>
+          </div>
+          <div class="siq-field siq-field--compact" id="siq-facility-selector-wrap" hidden>
+            <label for="siq-facility-selector">Facility</label>
+            <select id="siq-facility-selector" name="facility"></select>
+          </div>
+          <div class="siq-preview-readonly" id="siq-preview-facility-wrap" hidden>
+            <span>Facility</span>
+            <strong id="siq-preview-facility-name"></strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="siq-facility-context-bar" id="siq-facility-context-bar" aria-labelledby="siq-facility-context-title" hidden>
+        <h2 class="siq-visually-hidden" id="siq-facility-context-title">Active facility context</h2>
+        <dl class="siq-facility-context-list">
+          <div>
+            <dt>Customer</dt>
+            <dd id="siq-customer-name"></dd>
+          </div>
+          <div>
+            <dt>Facility</dt>
+            <dd id="siq-facility-name"></dd>
+          </div>
+          <div class="siq-facility-context-list__shift">
+            <dt>Active Shift</dt>
+            <dd>
+              <span id="siq-shift-label"></span>
+              <span class="siq-facility-context-list__detail" id="siq-shift-range"></span>
+            </dd>
+          </div>
+          <div>
+            <dt>Timezone</dt>
+            <dd id="siq-context-timezone"></dd>
+          </div>
+          <div>
+            <dt>Authorized Units</dt>
+            <dd id="siq-authorized-unit-count"></dd>
+          </div>
+        </dl>
+      </section>
+
+      <div class="siq-facility-context-error" id="siq-facility-context-error" role="status" aria-live="polite" hidden></div>
+    </header>
+
+    <main class="siq-main" id="siq-main">
+      <section class="siq-module siq-module--active" id="siq-module-operations" data-module-panel="operations" aria-labelledby="siq-operations-title">
+        <div class="siq-module-heading">
+          <div>
+            <h1 class="siq-screen-title" id="siq-operations-title">Operations</h1>
+            <p class="siq-screen-note">Current yard status from MyGeotab.</p>
+          </div>
+          <button class="siq-button" type="button" id="siq-simulate-button">Simulate New Telemetry</button>
+        </div>
+
+        <section class="siq-kpi-strip" id="siq-kpi-strip" aria-label="Operations summary">
+          <div class="siq-kpi">
+            <span class="siq-kpi__label">Moving</span>
+            <span class="siq-kpi__value" id="siq-kpi-moving-value">0</span>
+            <span class="siq-kpi__detail" id="siq-kpi-unit-detail">0 units in this facility</span>
+          </div>
+          <div class="siq-kpi">
+            <span class="siq-kpi__label">Idling</span>
+            <span class="siq-kpi__value" id="siq-kpi-idling-value">0</span>
+          </div>
+          <div class="siq-kpi">
+            <span class="siq-kpi__label">Off</span>
+            <span class="siq-kpi__value" id="siq-kpi-off-value">0</span>
+          </div>
+          <div class="siq-kpi">
+            <span class="siq-kpi__label">With Trailer</span>
+            <span class="siq-kpi__value" id="siq-kpi-coupled-value">0</span>
+          </div>
+          <div class="siq-kpi">
+            <span class="siq-kpi__label">Completed Moves</span>
+            <span class="siq-kpi__value" id="siq-kpi-completed-value">—</span>
+          </div>
+        </section>
+
+        <div class="siq-operations-layout">
+          <section class="siq-unit-board" aria-labelledby="siq-unit-board-title">
+            <div class="siq-board-toolbar">
+              <div>
+                <h2 class="siq-section-title" id="siq-unit-board-title">Unit Board</h2>
+                <span class="siq-board-window" id="siq-operations-window-label">Completed Moves — select a report window</span>
+              </div>
+              <div class="siq-board-filters" role="group" aria-label="Unit board filters">
+                <button class="siq-filter-button siq-filter-button--active" type="button" data-board-filter="all" aria-pressed="true">All states</button>
+                <button class="siq-filter-button" type="button" data-board-filter="moving" aria-pressed="false">Moving</button>
+                <button class="siq-filter-button" type="button" data-board-filter="idling" aria-pressed="false">Idling</button>
+                <button class="siq-filter-button" type="button" data-board-filter="off" aria-pressed="false">Off</button>
+                <button class="siq-filter-button" type="button" data-board-filter="coupled" aria-pressed="false">With Trailer</button>
+              </div>
+            </div>
+
+            <div class="siq-board-grid" role="table" aria-label="SpotterIQ unit board">
+              <div class="siq-board-head" role="row">
+                <div role="columnheader">Unit</div>
+                <div role="columnheader">Operating Mode</div>
+                <div role="columnheader"><span>Completed</span><span>Moves</span></div>
+                <div role="columnheader">Speed</div>
+                <div role="columnheader">Last Report</div>
+              </div>
+              <div class="siq-board-body" id="siq-unit-board-body"></div>
+            </div>
+          </section>
+
+          <aside class="siq-detail-drawer" id="siq-detail-drawer" aria-labelledby="siq-detail-title">
+            <div class="siq-detail-drawer__header">
+              <span class="siq-selection-marker" aria-hidden="true"></span>
+              <div class="siq-detail-drawer__heading">
+                <div class="siq-context-label">Unit detail</div>
+                <h2 class="siq-detail-title" id="siq-detail-title">Select a unit</h2>
+              </div>
+              <button class="siq-icon-button" type="button" id="siq-drawer-close" aria-label="Close unit details">x</button>
+            </div>
+            <div class="siq-detail-content" id="siq-detail-content">
+              <p class="siq-empty-detail">Choose a row to inspect current unit state and available activity.</p>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="siq-module" id="siq-module-performance" data-module-panel="performance" aria-labelledby="siq-performance-title">
+        <div class="siq-module-heading">
+          <div>
+            <h1 class="siq-screen-title" id="siq-performance-title">Performance</h1>
+            <p class="siq-screen-note">Operational scorecard and shift-closeout workspace using fixture metrics only.</p>
+          </div>
+          <span class="siq-demo-flag">Demo content</span>
+        </div>
+
+        <form class="siq-scope-bar siq-performance-scope-bar" id="siq-performance-scope-form">
+          <div class="siq-field siq-analysis-field">
+            <label for="siq-performance-date-range">Date Range</label>
+            <select id="siq-performance-date-range" name="dateRange"></select>
+            <span class="siq-field-note">Overall reporting period</span>
+          </div>
+          <div class="siq-field siq-field--shift siq-analysis-field">
+            <label for="siq-performance-shift">Shift</label>
+            <select id="siq-performance-shift" name="shift"></select>
+            <span class="siq-field-note" id="siq-performance-shift-detail">Filters activity within the period</span>
+          </div>
+          <div class="siq-field siq-analysis-field">
+            <label for="siq-performance-compare">Compare To</label>
+            <select id="siq-performance-compare" name="compare"></select>
+            <span class="siq-field-note">Comparison baseline</span>
+          </div>
+          <div class="siq-timezone-block siq-analysis-field">
+            <span class="siq-analysis-label">Timezone</span>
+            <strong class="siq-readonly-value" id="siq-performance-timezone">America/New_York</strong>
+            <span class="siq-field-note">Fixture facility setting</span>
+          </div>
+          <div class="siq-scope-actions siq-analysis-actions">
+            <span aria-hidden="true"></span>
+            <div class="siq-analysis-actions__buttons">
+              <button class="siq-button siq-button--primary" type="submit">Apply</button>
+              <button class="siq-button" type="reset">Reset</button>
+              <button class="siq-button" type="button" id="siq-performance-export">Export</button>
+            </div>
+            <span aria-hidden="true"></span>
+          </div>
+          <div class="siq-custom-range siq-analysis-custom-range" id="siq-performance-custom-range" hidden>
+            <div class="siq-field">
+              <label for="siq-performance-start-date">Start Date</label>
+              <input type="date" id="siq-performance-start-date" name="startDate">
+            </div>
+            <div class="siq-field">
+              <label for="siq-performance-start-time">Start Time</label>
+              <input type="time" id="siq-performance-start-time" name="startTime">
+            </div>
+            <div class="siq-field">
+              <label for="siq-performance-end-date">End Date</label>
+              <input type="date" id="siq-performance-end-date" name="endDate">
+            </div>
+            <div class="siq-field">
+              <label for="siq-performance-end-time">End Time</label>
+              <input type="time" id="siq-performance-end-time" name="endTime">
+            </div>
+          </div>
+        </form>
+        <p class="siq-status-message" id="siq-performance-status" aria-live="polite"></p>
+
+        <section class="siq-summary-band siq-facility-summary" id="siq-performance-summary-band" aria-labelledby="siq-shift-summary-title">
+          <div class="siq-summary-band__heading">
+            <span class="siq-context-label">Facility result</span>
+            <h2 class="siq-section-title" id="siq-shift-summary-title">Facility Performance Summary</h2>
+            <span class="siq-summary-scope" id="siq-performance-scope-label">Today / Demo Shift A</span>
+          </div>
+          <div class="siq-summary-metrics" id="siq-summary-metrics"></div>
+        </section>
+        <p class="siq-summary-notice" id="siq-summary-data-notice" role="status" aria-live="polite" hidden></p>
+
+        <div class="siq-performance-layout" id="siq-performance-layout">
+          <section class="siq-performance-ranking" aria-labelledby="siq-unit-ranking-title">
+            <div class="siq-section-heading">
+              <div>
+                <span class="siq-context-label">Fleet comparison</span>
+                <h2 class="siq-section-title" id="siq-unit-ranking-title">Unit Performance Ranking</h2>
+                <p class="siq-screen-note" id="siq-unit-ranking-context">Attention first / Productive Utilization descending</p>
+              </div>
+              <span class="siq-section-count" id="siq-scorecard-count">0 authorized fixture units</span>
+            </div>
+            <div class="siq-performance-table-scroll" tabindex="0" aria-label="Scrollable unit performance ranking">
+              <table class="siq-performance-ranking-table">
+                <colgroup>
+                  <col class="siq-ranking-col--unit">
+                  <col class="siq-ranking-col--role">
+                  <col class="siq-ranking-col--engine-hours">
+                  <col class="siq-ranking-col--completed-moves">
+                  <col class="siq-ranking-col--moves-per-hour">
+                  <col class="siq-ranking-col--utilization">
+                  <col class="siq-ranking-col--idle">
+                  <col class="siq-ranking-col--fuel">
+                  <col class="siq-ranking-col--top-speed">
+                  <col class="siq-ranking-col--time-over-limit">
+                  <col class="siq-ranking-col--attention">
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th class="siq-ranking-heading--text" scope="col" data-sort-column="unit"><button type="button" data-performance-sort="unit">Unit</button></th>
+                    <th class="siq-ranking-heading--text" scope="col" data-sort-column="role"><button type="button" data-performance-sort="role">Role</button></th>
+                    <th class="siq-ranking-heading--numeric" scope="col" data-sort-column="engineHours"><button type="button" data-performance-sort="engineHours">Engine Hours</button></th>
+                    <th class="siq-ranking-heading--numeric" scope="col" data-sort-column="completedMoves"><button type="button" data-performance-sort="completedMoves">Completed Moves</button></th>
+                    <th class="siq-ranking-heading--numeric" scope="col" data-sort-column="movesPerEngineHour"><button type="button" data-performance-sort="movesPerEngineHour">Moves / Engine Hour</button></th>
+                    <th class="siq-ranking-heading--numeric" scope="col" data-sort-column="productiveUtilization"><button type="button" data-performance-sort="productiveUtilization">Productive Utilization</button></th>
+                    <th class="siq-ranking-heading--numeric" scope="col" data-sort-column="idleTime"><button type="button" data-performance-sort="idleTime">Idle Time</button></th>
+                    <th class="siq-ranking-heading--numeric" scope="col" data-sort-column="fuelPerMove"><button type="button" data-performance-sort="fuelPerMove">Fuel / Move</button></th>
+                    <th class="siq-ranking-heading--numeric" scope="col" data-sort-column="topSpeed"><button type="button" data-performance-sort="topSpeed">Top Speed</button></th>
+                    <th class="siq-ranking-heading--numeric" scope="col" data-sort-column="timeOverLimit"><button type="button" data-performance-sort="timeOverLimit">Time Over Limit</button></th>
+                    <th class="siq-ranking-heading--text" scope="col" data-sort-column="attention" aria-sort="descending"><button type="button" data-performance-sort="attention">Attention</button></th>
+                  </tr>
+                </thead>
+                <tbody id="siq-performance-score-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="siq-performance-detail" id="siq-performance-detail" aria-labelledby="siq-performance-detail-title">
+            <div class="siq-performance-detail__header">
+              <span class="siq-selection-marker" aria-hidden="true"></span>
+              <div>
+                <div class="siq-context-label">Unit Analysis</div>
+                <h2 class="siq-detail-title" id="siq-performance-detail-title">Select a unit</h2>
+                <p class="siq-performance-detail__scope" id="siq-performance-detail-scope">Select an authorized unit</p>
+                <div class="siq-performance-capabilities" id="siq-performance-detail-availability" aria-label="Performance capability availability"></div>
+              </div>
+            </div>
+            <div class="siq-performance-detail__body" id="siq-performance-detail-content">
+              <div class="siq-selected-analysis-upper">
+                <section class="siq-analysis-panel siq-time-distribution" aria-labelledby="siq-time-distribution-title">
+                  <div class="siq-analysis-panel__heading">
+                    <div>
+                      <span class="siq-context-label">Operating composition</span>
+                      <h3 class="siq-mini-title" id="siq-time-distribution-title">Time Distribution</h3>
+                    </div>
+                  </div>
+                  <div class="siq-donut-layout">
+                    <div class="siq-donut-chart" id="siq-performance-donut-chart"></div>
+                    <div class="siq-donut-legend" id="siq-performance-donut-legend"></div>
+                  </div>
+                  <p class="siq-chart-summary" id="siq-performance-donut-summary"></p>
+                </section>
+
+                <section class="siq-analysis-panel" aria-labelledby="siq-unit-facility-title">
+                  <div class="siq-analysis-panel__heading">
+                    <div>
+                      <span class="siq-context-label">Unit context</span>
+                      <h3 class="siq-mini-title" id="siq-unit-facility-title">Unit vs Facility</h3>
+                    </div>
+                  </div>
+                  <div class="siq-unit-comparison" id="siq-unit-facility-comparison"></div>
+                </section>
+              </div>
+
+              <section class="siq-analysis-panel siq-findings-panel" aria-labelledby="siq-observations-title">
+                <div class="siq-analysis-panel__heading">
+                  <div>
+                    <span class="siq-context-label">Deterministic findings</span>
+                    <h3 class="siq-mini-title" id="siq-observations-title">Operational Observations and Exceptions</h3>
+                  </div>
+                </div>
+                <div class="siq-observation-groups" id="siq-performance-observations"></div>
+              </section>
+
+              <section class="siq-analysis-panel siq-trend-panel" aria-labelledby="siq-performance-trend-title">
+                <div class="siq-analysis-panel__heading siq-trend-heading">
+                  <div>
+                    <span class="siq-context-label">Change over time</span>
+                    <h3 class="siq-mini-title" id="siq-performance-trend-title">Performance Trend</h3>
+                  </div>
+                  <div class="siq-field siq-field--compact siq-trend-selector">
+                    <label for="siq-performance-trend-metric">Metric</label>
+                    <select id="siq-performance-trend-metric">
+                      <option value="movesPerEngineHour">Moves / Engine Hour</option>
+                      <option value="productiveUtilization">Productive Utilization</option>
+                      <option value="fuelPerMove">Fuel / Move</option>
+                      <option value="idleTime">Idle Time</option>
+                      <option value="timeOverLimit">Time Over Speed Limit</option>
+                      <option value="engineHours">Engine Hours per Period</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="siq-trend-chart" id="siq-performance-trend-chart"></div>
+                <p class="siq-chart-summary" id="siq-performance-trend-summary"></p>
+              </section>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="siq-module" id="siq-module-reports" data-module-panel="reports" aria-labelledby="siq-reports-title">
+        <div class="siq-module-heading">
+          <div>
+            <h1 class="siq-screen-title" id="siq-reports-title">Reports</h1>
+            <p class="siq-screen-note">Choose a report and scope, then review the fixture preview.</p>
+          </div>
+          <span class="siq-demo-flag">Demo content</span>
+        </div>
+
+        <form class="siq-report-command-bar" id="siq-report-form" aria-label="Report commands">
+          <div class="siq-report-command-field siq-report-command-field--report">
+            <label for="siq-report-selector">Report</label>
+            <select id="siq-report-selector" name="report"></select>
+          </div>
+
+          <div class="siq-report-command-field">
+            <label for="siq-report-date-range">Date Range</label>
+            <select id="siq-report-date-range" name="dateRange"></select>
+          </div>
+
+          <div class="siq-report-command-field">
+            <label for="siq-report-shift">Shift</label>
+            <select id="siq-report-shift" name="shift"></select>
+            <span id="siq-report-shift-detail" hidden></span>
+          </div>
+
+          <div class="siq-report-command-field">
+            <label for="siq-report-unit-mode">Units</label>
+            <select id="siq-report-unit-mode" name="unitMode">
+              <option value="all" selected>All Authorized Units</option>
+              <option value="selected">Selected Units</option>
+            </select>
+          </div>
+
+          <div class="siq-report-command-field">
+            <label for="siq-report-format">Format</label>
+            <select id="siq-report-format" name="outputFormat"></select>
+          </div>
+
+          <div class="siq-report-command-action">
+            <button class="siq-button siq-button--primary" type="button" id="siq-generate-report">Generate Report</button>
+          </div>
+
+          <div class="siq-custom-range siq-custom-range--report" id="siq-report-custom-range" hidden>
+            <div class="siq-field">
+              <label for="siq-report-start-date">Start Date</label>
+              <input type="date" id="siq-report-start-date" name="startDate">
+            </div>
+            <div class="siq-field">
+              <label for="siq-report-start-time">Start Time</label>
+              <input type="time" id="siq-report-start-time" name="startTime">
+            </div>
+            <div class="siq-field">
+              <label for="siq-report-end-date">End Date</label>
+              <input type="date" id="siq-report-end-date" name="endDate">
+            </div>
+            <div class="siq-field">
+              <label for="siq-report-end-time">End Time</label>
+              <input type="time" id="siq-report-end-time" name="endTime">
+            </div>
+          </div>
+
+          <fieldset class="siq-unit-choices" id="siq-report-unit-choices" hidden>
+            <legend>Selected fixture units</legend>
+          </fieldset>
+
+          <div class="siq-report-command-field siq-report-command-field--comparison"
+            id="siq-report-comparison-wrap">
+            <label for="siq-report-comparison">Comparison</label>
+            <select id="siq-report-comparison" name="comparison"></select>
+          </div>
+        </form>
+
+        <p class="siq-report-description" id="siq-report-description"></p>
+
+        <div class="siq-report-scope-line" aria-label="Current report scope">
+          <span class="siq-context-label">Scope</span>
+          <strong id="siq-report-scope-summary"></strong>
+        </div>
+
+        <details class="siq-report-scope-details" id="siq-report-scope-details">
+          <summary>Scope details</summary>
+          <dl class="siq-scope-preview" id="siq-scope-preview">
+            <div><dt>Customer</dt><dd id="siq-preview-customer"></dd></div>
+            <div><dt>Facility</dt><dd id="siq-preview-facility"></dd></div>
+            <div><dt>Timezone</dt><dd id="siq-preview-timezone"></dd></div>
+            <div><dt>Exact Start</dt><dd id="siq-preview-start"></dd></div>
+            <div><dt>Exact End</dt><dd id="siq-preview-end"></dd></div>
+            <div><dt>Shift Hours</dt><dd id="siq-preview-shift-hours"></dd></div>
+            <div><dt>Crosses Midnight</dt><dd id="siq-preview-overnight"></dd></div>
+            <div><dt>Authorized Units</dt><dd id="siq-preview-units"></dd></div>
+            <div><dt>Output Format</dt><dd id="siq-preview-format"></dd></div>
+            <div id="siq-preview-comparison-row"><dt>Comparison</dt><dd id="siq-preview-comparison"></dd></div>
+          </dl>
+        </details>
+
+        <section class="siq-report-preview siq-report-full-preview"
+          id="siq-report-preview"
+          data-report-preview="full-width"
+          aria-label="Selected report preview"></section>
+
+        <p class="siq-status-message siq-report-status"
+          id="siq-report-status"
+          aria-live="polite"
+          hidden></p>
+      </section>
+
+      <section class="siq-module" id="siq-module-settings" data-module-panel="settings" aria-labelledby="siq-settings-title">
+        <div class="siq-module-heading">
+          <div>
+            <h1 class="siq-screen-title" id="siq-settings-title">Settings</h1>
+            <p class="siq-screen-note">Administrator-only placeholder. Configuration editing remains deferred.</p>
+          </div>
+          <span class="siq-demo-flag">Placeholder</span>
+        </div>
+        <section class="siq-settings-placeholder" aria-label="Settings placeholder">
+          <h2 class="siq-section-title">Facility Configuration</h2>
+          <p class="siq-screen-note">Customer, facility, enrollment, thresholds, diagnostics, and report-branding editing are not active in this fixture session.</p>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script src="core/runtime-data-boundary.js"></script>
+  <script src="core/configuration.js"></script>
+  <script src="core/addin-identity.js"></script>
+  <script src="core/diagnostic-channels.js"></script>
+  <script src="core/asset-identity.js"></script>
+  <script src="core/asset-assignments.js"></script>
+  <script src="core/historical-entitlement.js"></script>
+  <script src="core/driver-attribution.js"></script>
+  <script src="core/powertrain-faults.js"></script>
+  <script src="core/group-reconciliation.js"></script>
+  <script src="core/engine-hours.js"></script>
+  <script src="core/usage-billing.js"></script>
+  <script src="core/staging-log.js"></script>
+  <script src="core/authorization.js"></script>
+  <script src="core/selectors.js"></script>
+  <script src="core/performance.js"></script>
+  <script src="core/shift-performance.js?v=4.0.0-wo3"></script>
+  <script src="core/timezone.js"></script>
+  <script src="core/shifts.js"></script>
+  <script src="core/telemetry.js"></script>
+  <script src="core/operational-states.js"></script>
+  <script src="core/intervals.js"></script>
+  <script src="core/timeline.js"></script>
+  <script src="core/move-state-machine.js"></script>
+  <script src="core/moves.js"></script>
+  <script src="core/move-summaries.js"></script>
+  <script src="core/speed-events.js"></script>
+  <script src="core/speed-policies.js"></script>
+  <script src="fixture-data.js"></script>
+  <script src="adapters/mygeotab-normalization.js"></script>
+  <script src="adapters/mygeotab-client.js?v=4.0.0-wo1"></script>
+  <script src="adapters/mygeotab-driver-events.js"></script>
+  <script src="adapters/mygeotab-faults.js"></script>
+  <script src="adapters/mygeotab-diagnostics.js"></script>
+  <script src="core/facility-config.js"></script>
+  <script src="core/asset-profile-config.js"></script>
+  <script src="adapters/mygeotab-configuration.js"></script>
+  <script src="adapters/addin-data-config.js"></script>
+  <script src="adapters/mygeotab-operations.js?v=4.0.0-wo3"></script>
+  <script src="adapters/mygeotab-performance.js?v=4.0.0-wo3"></script>
+  <script src="controllers/operations-controller.js?v=4.0.0-wo3"></script>
+  <script src="controllers/performance-controller.js?v=4.0.0-wo3"></script>
+  <script src="views/operations-view.js?v=4.0.0-wo3"></script>
+  <script src="views/performance-view.js?v=4.0.0-wo3"></script>
+  <script src="views/commissioning-diagnostics.js"></script>
+  <script src="app.js?v=4.0.0-wo3"></script>
+  <script src="mygeotab-entry.js?v=4.0.0-wo3"></script>
+</body>
+</html>
