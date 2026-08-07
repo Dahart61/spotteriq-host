@@ -1499,6 +1499,16 @@
   border: 0;
 }
 
+.siq-performance-scope-bar > .siq-custom-range:not(.siq-analysis-custom-range) {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(4, minmax(140px, 180px));
+  justify-content: start;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--siq-line);
+  border-left: 0;
+}
+
 .siq-analysis-actions {
   margin-left: 0;
   padding: 0;
@@ -3163,6 +3173,10 @@
     border-left: 0;
   }
 
+  .siq-performance-scope-bar > .siq-custom-range:not(.siq-analysis-custom-range) {
+    grid-template-columns: repeat(2, minmax(140px, 180px));
+  }
+
   .siq-timezone-block {
     padding: 7px 0;
     border-top: 1px solid var(--siq-line);
@@ -3361,6 +3375,10 @@
   .siq-unit-choices,
   .siq-state-duration-labels {
     grid-template-columns: 1fr;
+  }
+
+  .siq-performance-scope-bar > .siq-custom-range:not(.siq-analysis-custom-range) {
+    grid-template-columns: minmax(140px, 180px);
   }
 
   .siq-report-command-bar {
