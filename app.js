@@ -165,7 +165,8 @@
 
     function showProductionModule(moduleName) {
       var app = document.querySelector(".siq-app");
-      var requested = moduleName === "settings" ? "operations" : moduleName;
+      var requested = ["reports", "settings"].indexOf(moduleName) !== -1
+        ? "operations" : moduleName;
       app.querySelectorAll("[data-module-panel]").forEach(function (panel) {
         panel.classList.toggle(
           "siq-module--active",
@@ -231,6 +232,9 @@
         "report"
       );
       app.querySelectorAll("[data-module]").forEach(function (button) {
+        if (button.getAttribute("data-module") === "reports") {
+          button.hidden = true;
+        }
         button.addEventListener("click", function () {
           showProductionModule(button.getAttribute("data-module"));
         });

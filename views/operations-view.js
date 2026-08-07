@@ -630,7 +630,7 @@
       if (model.nativeDisplayName && model.nativeDisplayName !== model.displayName) {
         detailMetric(metrics, "nativeDisplayName", "MyGeotab Name");
       }
-      if (model.trailerStateSupported) {
+      if (model.trailerStateSupported && model.fifthWheelStatusLabel) {
         detailMetric(metrics, "fifthWheelStatusLabel", "Trailer");
         detailMetric(metrics, "trailerStateAt", "Trailer State Reported");
       }
