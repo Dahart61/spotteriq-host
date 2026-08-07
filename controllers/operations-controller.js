@@ -63,7 +63,9 @@
       loadedScopeKey: null,
       timerId: null,
       inFlight: null,
+      inFlightGeneration: null,
       pendingInitial: false,
+      pendingRefresh: false,
       selectedDeviceId: null,
       healthGeneration: 0,
       healthInFlight: null,
@@ -171,9 +173,11 @@
         }
         return result;
       }).catch(function (error) {
-        logger.error("Engine Health refresh failure", {
-          category: error && error.code || "unexpected"
-        });
+        if (canApplyHealth(generation, healthGeneration, deviceId)) {
+          logger.error("Engine Health refresh failure", {
+            category: error && error.code || "unexpected"
+          });
+        }
         return null;
       }).finally(function () {
         if (state.healthInFlight === request) {
@@ -232,11 +236,21 @@
       onStatus("failure");
     }
 
-    function finishRequest() {
+    function finishRequest(request) {
+      if (state.inFlight !== request) {
+        return;
+      }
       state.inFlight = null;
+      state.inFlightGeneration = null;
       if (state.pendingInitial && state.active) {
         state.pendingInitial = false;
+        state.pendingRefresh = false;
         runInitial();
+        return;
+      }
+      if (state.pendingRefresh && state.active) {
+        state.pendingRefresh = false;
+        runIncremental(false);
         return;
       }
       schedule();
@@ -263,6 +277,9 @@
         })
         .then(function (result) {
           if (!result.ok) {
+            if (!canApply(generation, sequence)) {
+              return result;
+            }
             var resultCategory = result.code || "no-authorized-assets";
             logger.error("Operations initial load failure [" + resultCategory + "]", {
               category: resultCategory
@@ -273,27 +290,31 @@
             }
             return result;
           }
-          applyResult(result, generation, sequence, true);
-          logger.info("Operations initial load success", {
-            authorizedAssetCount: (result.deviceIds || []).length
-          });
-          state.failureLevel = 0;
-          var now = clock.now();
-          state.laneLastAt.operational = now;
-          state.laneLastAt.fuelDef = now;
-          state.laneLastAt.engineHours = now;
+          if (applyResult(result, generation, sequence, true)) {
+            logger.info("Operations initial load success", {
+              authorizedAssetCount: (result.deviceIds || []).length
+            });
+            state.failureLevel = 0;
+            var now = clock.now();
+            state.laneLastAt.operational = now;
+            state.laneLastAt.fuelDef = now;
+            state.laneLastAt.engineHours = now;
+          }
           return result;
         })
         .catch(function (error) {
-          var category = runtimeFailureCategory(error);
-          logger.error("Operations initial load failure [" + category + "]", {
-            category: category
-          });
-          handleFailure(error, generation);
+          if (generation === state.generation && state.active) {
+            var category = runtimeFailureCategory(error);
+            logger.error("Operations initial load failure [" + category + "]", {
+              category: category
+            });
+            handleFailure(error, generation);
+          }
           return null;
         })
-        .finally(finishRequest);
+        .finally(function () { finishRequest(request); });
       state.inFlight = request;
+      state.inFlightGeneration = generation;
       return request;
     }
 
@@ -306,6 +327,9 @@
         return Promise.resolve(null);
       }
       if (state.inFlight) {
+        if (state.inFlightGeneration !== state.generation) {
+          state.pendingRefresh = true;
+        }
         return state.inFlight;
       }
       clearSchedule();
@@ -327,6 +351,9 @@
             } else {
               result = await dataSource.refreshEngineHours(context);
             }
+            if (!canApply(generation, sequence)) {
+              return result;
+            }
             if (result && result.requiresInitialReload) {
               state.loadedScopeKey = null;
               state.pendingInitial = true;
@@ -337,19 +364,24 @@
               state.laneLastAt[lane] = clock.now();
             }
           }
-          state.failureLevel = Math.max(0, state.failureLevel - 1);
-          logger.info("refresh success", { lanes: lanes.slice() });
+          if (generation === state.generation && state.active) {
+            state.failureLevel = Math.max(0, state.failureLevel - 1);
+            logger.info("refresh success", { lanes: lanes.slice() });
+          }
           return result;
         })
         .catch(function (error) {
-          logger.error("refresh failure", {
-            category: runtimeFailureCategory(error)
-          });
-          handleFailure(error, generation);
+          if (generation === state.generation && state.active) {
+            logger.error("refresh failure", {
+              category: runtimeFailureCategory(error)
+            });
+            handleFailure(error, generation);
+          }
           return null;
         })
-        .finally(finishRequest);
+        .finally(function () { finishRequest(request); });
       state.inFlight = request;
+      state.inFlightGeneration = generation;
       return request;
     }
 
@@ -376,8 +408,9 @@
           handleFailure(error, generation);
           return null;
         })
-        .finally(finishRequest);
+        .finally(function () { finishRequest(request); });
       state.inFlight = request;
+      state.inFlightGeneration = generation;
       return request;
     }
 
@@ -406,6 +439,7 @@
       state.healthInFlight = null;
       state.healthRequestDeviceId = null;
       state.pendingInitial = false;
+      state.pendingRefresh = false;
       clearSchedule();
       if (typeof view.updateFreshness === "function") {
         view.updateFreshness({

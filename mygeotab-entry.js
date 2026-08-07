@@ -23,6 +23,8 @@
     var controllerConfigurationKey = null;
     var visibilityHandler = null;
     var commissioningView = null;
+    var focused = false;
+    var lifecycleGeneration = 0;
     var commissioningState = {
       lifecycleInitialized: "No",
       apiAvailable: "No",
@@ -258,11 +260,18 @@
       complete();
     }
 
-    async function focusLocal(api, state, selectedGroupIds) {
+    function isCurrentFocus(generation) {
+      return focused && generation === lifecycleGeneration;
+    }
+
+    async function focusLocal(api, state, selectedGroupIds, generation) {
       if (!controller || !deployment || !deployment.ok) {
         return;
       }
       var session = await root.SIQ_MYGEOTAB_CLIENT.getSession(api);
+      if (!isCurrentFocus(generation)) {
+        return null;
+      }
       var user = root.SIQ_MYGEOTAB_CONFIGURATION.resolveConfiguredUser(
         deployment.configuration,
         session
@@ -286,7 +295,7 @@
       });
     }
 
-    async function focusLive(api, state, selectedGroupIds, userContext) {
+    async function focusLive(api, state, selectedGroupIds, userContext, generation) {
       updateCommissioning({
         apiAvailable: api && typeof api.call === "function" ? "Yes" : "No",
         queryStatus: "Querying",
@@ -309,6 +318,9 @@
         configurationError.code = "FACILITY_CONFIGURATION_FAILED";
         configurationError.cause = error;
         throw configurationError;
+      }
+      if (!isCurrentFocus(generation)) {
+        return null;
       }
       logger.info("AddInData records retrieved", {
         count: loaded.records.length,
@@ -375,6 +387,9 @@
         focusError.cause = error;
         throw focusError;
       }
+      if (!isCurrentFocus(generation)) {
+        return null;
+      }
       root.SIQ_RUNTIME_DATA_BOUNDARY.assertNoFixtureRecords(
         root.SIQ_APP && root.SIQ_APP.runtimeProjection,
         result && result.viewModels || []
@@ -401,6 +416,8 @@
     }
 
     async function focus(api, state) {
+      var generation = ++lifecycleGeneration;
+      focused = true;
       logger.info("focus called");
       if (mode === root.SIQ_MYGEOTAB_CONFIGURATION.MODES.FIXTURE) {
         return;
@@ -410,11 +427,23 @@
       try {
         var selectedGroupIds =
           await root.SIQ_MYGEOTAB_CONFIGURATION.groupIdsFromState(state);
-        if (mode === root.SIQ_MYGEOTAB_CONFIGURATION.MODES.LOCAL) {
-          return await focusLocal(api, state, selectedGroupIds);
+        if (!isCurrentFocus(generation)) {
+          return null;
         }
-        return await focusLive(api, state, selectedGroupIds, userContext);
+        if (mode === root.SIQ_MYGEOTAB_CONFIGURATION.MODES.LOCAL) {
+          return await focusLocal(api, state, selectedGroupIds, generation);
+        }
+        return await focusLive(
+          api,
+          state,
+          selectedGroupIds,
+          userContext,
+          generation
+        );
       } catch (error) {
+        if (!isCurrentFocus(generation)) {
+          return null;
+        }
         var category = error && error.code || "unexpected";
         logger.error("Operations initial load failure [" + category + "]", {
           category: category
@@ -434,6 +463,8 @@
 
     function blur() {
       logger.info("blur called");
+      focused = false;
+      lifecycleGeneration += 1;
       if (controller) {
         controller.blur();
       }
