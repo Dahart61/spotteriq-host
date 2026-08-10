@@ -25,6 +25,13 @@
     var commissioningView = null;
     var focused = false;
     var lifecycleGeneration = 0;
+    var activeApi = null;
+    var activeState = null;
+    var activeGroupKey = null;
+    var runtimeSelection = {
+      customerId: null,
+      facilityId: null
+    };
     var commissioningState = {
       lifecycleInitialized: "No",
       apiAvailable: "No",
@@ -51,21 +58,43 @@
       }
     }
 
-    function userContextFromState(state) {
-      var role = state && state.spotterIQRole;
-      if ([
-        "Customer Viewer",
-        "Customer Manager",
-        "Fleetsource Administrator"
-      ].indexOf(role) === -1) {
-        role = "Customer Viewer";
-      }
+    function customerUserContext() {
       return {
-        role: role,
-        customerId: state && state.spotterIQCustomerId || null,
-        canCommissionSpotterIQ: role === "Fleetsource Administrator"
-          && state && state.spotterIQCanCommission === true
+        role: "Customer Viewer",
+        canSelectAcrossCustomers: false,
+        canCommissionSpotterIQ: false
       };
+    }
+
+    function clearActiveScope() {
+      if (controller) {
+        controller.blur();
+      }
+      if (performanceController
+        && typeof performanceController.clear === "function") {
+        performanceController.clear();
+      }
+      if (view && typeof view.clearScope === "function") {
+        view.clearScope();
+      }
+      updateCommissioning({
+        selectedCustomer: null,
+        selectedFacility: null,
+        configuredGroupId: null,
+        authorizedDeviceCount: 0,
+        resolvedMappingCount: 0,
+        timezone: null,
+        activeShift: null,
+        refreshState: "Not started"
+      });
+    }
+
+    function restartLiveScope() {
+      if (!focused || !activeApi) {
+        return;
+      }
+      clearActiveScope();
+      focus(activeApi, activeState);
     }
 
     function ensureCommissioningView(userContext) {
@@ -96,6 +125,17 @@
           if (controller && typeof controller.selectDevice === "function") {
             controller.selectDevice(deviceId);
           }
+        },
+        onCustomerScopeChange: function (customerId) {
+          runtimeSelection = {
+            customerId: customerId || null,
+            facilityId: null
+          };
+          restartLiveScope();
+        },
+        onFacilityScopeChange: function (facilityId) {
+          runtimeSelection.facilityId = facilityId || null;
+          restartLiveScope();
         }
       });
       view.bind(null);
@@ -172,6 +212,12 @@
         facility: result.facility,
         devices: result.devices
       });
+      if (!result.devices.length
+        && typeof performanceView.showError === "function") {
+        performanceView.showError(
+          "This configured facility has no active authorized devices."
+        );
+      }
       if (!performanceNavigationBound) {
         performanceNavigationBound = true;
         var button = root.document.querySelector('[data-module="performance"]');
@@ -286,7 +332,7 @@
         }
       );
       view.setUserContext(selection && selection.user
-        ? selection.user : userContextFromState(state));
+        ? selection.user : customerUserContext());
       return controller.focus({
         api: api,
         state: state,
@@ -307,11 +353,9 @@
           api: api,
           state: state,
           activeGroupIds: selectedGroupIds,
+          applyActiveGroupFilter: true,
           userContext: userContext,
-          explicitSelection: {
-            customerId: state && state.spotterIQCustomerId,
-            facilityId: state && state.spotterIQFacilityId
-          }
+          explicitSelection: runtimeSelection
         });
       } catch (error) {
         var configurationError = new Error("Facility configuration failed");
@@ -342,8 +386,17 @@
           }, []).join(", ") || "Validation finding"
           : "None"
       });
+      if (typeof view.setScopeSelection === "function") {
+        view.setScopeSelection(loaded.selectionOptions, loaded.message);
+      }
       if (!loaded.ok) {
-        view.showEmpty(loaded.message);
+        if ((loaded.code === "facility-selection-required"
+          || loaded.code === "administrator-selection-required")
+          && typeof view.showScopePrompt === "function") {
+          view.showScopePrompt(loaded.message);
+        } else {
+          view.showEmpty(loaded.message);
+        }
         return loaded;
       }
 
@@ -366,7 +419,7 @@
       });
       try {
         prepareController(loaded.configuration, loaded.authorizedRecords);
-        view.setUserContext(userContext);
+        view.setUserContext(loaded.selection.user);
       } catch (error) {
         var setupError = new Error("Operations controller setup failed");
         setupError.code = "CONTROLLER_SETUP_FAILED";
@@ -421,11 +474,13 @@
     async function focus(api, state) {
       var generation = ++lifecycleGeneration;
       focused = true;
+      activeApi = api;
+      activeState = state;
       logger.info("focus called");
       if (mode === root.SIQ_MYGEOTAB_CONFIGURATION.MODES.FIXTURE) {
         return;
       }
-      var userContext = userContextFromState(state);
+      var userContext = customerUserContext();
       ensureCommissioningView(userContext);
       try {
         var selectedGroupIds =
@@ -433,6 +488,12 @@
         if (!isCurrentFocus(generation)) {
           return null;
         }
+        var nextGroupKey = (selectedGroupIds || []).slice().sort().join(",");
+        if (activeGroupKey !== null && nextGroupKey !== activeGroupKey) {
+          runtimeSelection = { customerId: null, facilityId: null };
+          clearActiveScope();
+        }
+        activeGroupKey = nextGroupKey;
         if (mode === root.SIQ_MYGEOTAB_CONFIGURATION.MODES.LOCAL) {
           return await focusLocal(api, state, selectedGroupIds, generation);
         }
@@ -470,6 +531,10 @@
       lifecycleGeneration += 1;
       if (controller) {
         controller.blur();
+      }
+      if (performanceController
+        && typeof performanceController.clear === "function") {
+        performanceController.clear();
       }
       updateCommissioning({ refreshState: "Paused" });
     }

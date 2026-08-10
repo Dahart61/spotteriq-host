@@ -144,8 +144,21 @@
           inFlightKey = null;
           inFlightSelectionKey = null;
           cache.clear();
+          lastSelection = null;
         }
         view.setContext(context);
+      },
+      clear: function () {
+        generation += 1;
+        context = null;
+        inFlight = null;
+        inFlightKey = null;
+        inFlightSelectionKey = null;
+        cache.clear();
+        lastSelection = null;
+        if (typeof view.clear === "function") {
+          view.clear();
+        }
       },
       load: load,
       open: function () {

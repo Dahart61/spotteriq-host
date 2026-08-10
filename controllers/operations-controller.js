@@ -61,6 +61,7 @@
       context: null,
       requestedScopeKey: null,
       loadedScopeKey: null,
+      pollingEnabled: false,
       timerId: null,
       inFlight: null,
       inFlightGeneration: null,
@@ -117,7 +118,8 @@
 
     function schedule() {
       clearSchedule();
-      if (!state.active || !state.visible || state.inFlight) {
+      if (!state.active || !state.visible || state.inFlight
+        || !state.pollingEnabled) {
         return;
       }
       state.timerId = clock.setTimeout(function () {
@@ -199,9 +201,17 @@
       state.latestFleetDataAt = result.latestFleetDataAt || state.latestFleetDataAt;
       if (initial) {
         state.loadedScopeKey = result.scopeKey || state.requestedScopeKey;
+        state.pollingEnabled = result.configuredEmpty !== true
+          && (!Array.isArray(result.deviceIds) || result.deviceIds.length > 0);
         view.initializeRows(state.loadedScopeKey, result.viewModels || []);
         if (typeof view.updateContext === "function") {
           view.updateContext(result);
+        }
+        if (result.configuredEmpty === true
+          && typeof view.showConfiguredEmpty === "function") {
+          view.showConfiguredEmpty(
+            "This configured facility has no active authorized devices."
+          );
         }
       } else {
         view.patchRows(result.viewModels || []);
@@ -323,7 +333,8 @@
     }
 
     function runIncremental(manual) {
-      if (!state.active || !state.visible || !state.loadedScopeKey) {
+      if (!state.active || !state.visible || !state.loadedScopeKey
+        || !state.pollingEnabled) {
         return Promise.resolve(null);
       }
       if (state.inFlight) {
@@ -426,6 +437,7 @@
         state.healthInFlight = null;
         state.healthRequestDeviceId = null;
         state.loadedScopeKey = null;
+        state.pollingEnabled = false;
         clearSchedule();
         return runInitial();
       }
@@ -458,7 +470,7 @@
       } else if (state.active) {
         if (!state.loadedScopeKey) {
           return runInitial();
-        } else {
+        } else if (state.pollingEnabled) {
           return runIncremental(false);
         }
       }

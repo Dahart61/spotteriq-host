@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SpotterIQ by Fleetsource</title>
-  <link rel="stylesheet" href="styles.css?v=4.0.0-comm1">
+  <link rel="stylesheet" href="styles.css?v=4.0.0-scope1">
 </head>
 <body>
   <div class="siq-app" data-theme="dark">
@@ -79,6 +79,18 @@
             <strong id="siq-preview-facility-name"></strong>
           </div>
         </div>
+      </section>
+
+      <section class="siq-live-scope-controls" id="siq-live-scope-controls" aria-label="SpotterIQ facility scope" hidden>
+        <div class="siq-field siq-field--compact" id="siq-live-customer-selector-wrap" hidden>
+          <label for="siq-live-customer-selector">Customer</label>
+          <select id="siq-live-customer-selector" name="liveCustomer"></select>
+        </div>
+        <div class="siq-field siq-field--compact" id="siq-live-facility-selector-wrap" hidden>
+          <label for="siq-live-facility-selector">Facility</label>
+          <select id="siq-live-facility-selector" name="liveFacility"></select>
+        </div>
+        <p id="siq-live-scope-status" role="status" aria-live="polite"></p>
       </section>
 
       <section class="siq-facility-context-bar" id="siq-facility-context-bar" aria-labelledby="siq-facility-context-title" hidden>
@@ -539,15 +551,15 @@
   <script src="core/facility-config.js"></script>
   <script src="core/asset-profile-config.js"></script>
   <script src="adapters/mygeotab-configuration.js"></script>
-  <script src="adapters/addin-data-config.js"></script>
-  <script src="adapters/mygeotab-operations.js?v=4.0.0-comm1"></script>
+  <script src="adapters/addin-data-config.js?v=4.0.0-scope1"></script>
+  <script src="adapters/mygeotab-operations.js?v=4.0.0-scope1"></script>
   <script src="adapters/mygeotab-performance.js?v=4.0.0-wo3"></script>
-  <script src="controllers/operations-controller.js?v=4.0.0-resume2"></script>
-  <script src="controllers/performance-controller.js?v=4.0.0-wo4"></script>
-  <script src="views/operations-view.js?v=4.0.0-comm1"></script>
-  <script src="views/performance-view.js?v=4.0.0-wo4"></script>
+  <script src="controllers/operations-controller.js?v=4.0.0-scope1"></script>
+  <script src="controllers/performance-controller.js?v=4.0.0-scope1"></script>
+  <script src="views/operations-view.js?v=4.0.0-scope1"></script>
+  <script src="views/performance-view.js?v=4.0.0-scope1"></script>
   <script src="views/commissioning-diagnostics.js"></script>
-  <script src="app.js?v=4.0.0-rs1"></script>
-  <script src="mygeotab-entry.js?v=4.0.0-resume2"></script>
+  <script src="app.js?v=4.0.0-scope1"></script>
+  <script src="mygeotab-entry.js?v=4.0.0-scope1"></script>
 </body>
 </html>

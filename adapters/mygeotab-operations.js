@@ -1275,11 +1275,25 @@
         throw deviceQueryError;
       }
       if (!devices.length) {
+        cache.scopeKey = scopeKey(context) + "::configured-empty";
+        cache.facility = facility;
+        cache.devices = [];
+        cache.enrollments = new Map();
+        cache.recordsByDevice = new Map();
+        cache.statusByDevice = new Map();
         return {
-          ok: false,
-          reason: "No authorized assets",
-          code: "no-authorized-assets",
-          viewModels: []
+          ok: true,
+          code: "configured-empty-facility",
+          configuredEmpty: true,
+          scopeKey: cache.scopeKey,
+          customer: context.selection.customer,
+          facility: facility,
+          shiftOccurrence: null,
+          shiftStatus: "CONFIGURED_EMPTY_FACILITY",
+          deviceIds: [],
+          devices: [],
+          viewModels: [],
+          latestFleetDataAt: null
         };
       }
       var deviceIds;

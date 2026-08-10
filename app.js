@@ -1046,20 +1046,23 @@
 
   function updateKpis() {
     var metrics = deriveMetrics(authorizedUnits);
-    byId("siq-kpi-active-value").textContent = String(metrics.communicating);
-    byId("siq-kpi-active-detail").textContent = "of " + metrics.total + " authorized";
+    var presentations = authorizedUnits.map(selectors.operationsPresentation);
+    byId("siq-kpi-moving-value").textContent = String(presentations.filter(function (item) {
+      return /Moving/.test(item.state);
+    }).length);
+    byId("siq-kpi-idling-value").textContent = String(presentations.filter(function (item) {
+      return /Idle|Stationary/.test(item.state);
+    }).length);
+    byId("siq-kpi-off-value").textContent = String(presentations.filter(function (item) {
+      return /Off/.test(item.state);
+    }).length);
+    byId("siq-kpi-coupled-value").textContent = String(presentations.filter(function (item) {
+      return item.fifthWheelAvailable && /Closed|Coupled/.test(item.fifthWheelStatus);
+    }).length);
     byId("siq-kpi-completed-value").textContent = String(metrics.completedMoves);
-    byId("siq-kpi-completed-detail").textContent =
-      metrics.verifiedMoveUnitCount + " verified-capable units";
-    byId("siq-kpi-mip-value").textContent = String(metrics.moveInProgress);
-    byId("siq-kpi-utilization-value").textContent = formatOneDecimal(metrics.utilization) + "%";
-    byId("siq-kpi-over-speed-value").textContent =
-      metrics.overSpeedMinutes === null
-        ? "Unavailable" : metrics.overSpeedMinutes + "m";
-    byId("siq-kpi-over-speed-detail").textContent =
-      metrics.overSpeedMinutes === null
-        ? "Speed Policy Not Configured" : "Configured policy";
-    byId("siq-kpi-issues-value").textContent = String(metrics.issues);
+    byId("siq-kpi-unit-detail").textContent =
+      metrics.total + " units in this facility · "
+        + metrics.verifiedMoveUnitCount + " verified-capable units";
   }
 
   function buildSummaryBand() {

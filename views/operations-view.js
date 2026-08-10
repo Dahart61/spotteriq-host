@@ -186,9 +186,16 @@
     var currentUserContext = options && options.userContext || null;
     var reportByDevice = new Map();
     var appliedReportWindow = null;
+    var clearedScopeSequence = 0;
     var onSelectionChange = options
       && typeof options.onSelectionChange === "function"
       ? options.onSelectionChange : function () {};
+    var onCustomerScopeChange = options
+      && typeof options.onCustomerScopeChange === "function"
+      ? options.onCustomerScopeChange : function () {};
+    var onFacilityScopeChange = options
+      && typeof options.onFacilityScopeChange === "function"
+      ? options.onFacilityScopeChange : function () {};
 
     function byId(id) {
       return document.getElementById(id);
@@ -702,6 +709,26 @@
           "Engine Coolant Temperature");
       }
       content.append(state, metrics);
+      var commercialItems = selectors.unitDetailCommercialFields(
+        currentUserContext, model
+      );
+      if (commercialItems.length) {
+        var commercialSection = element("section", "siq-detail-section");
+        var commercialMetrics = element("div", "siq-detail-metrics");
+        commercialSection.appendChild(
+          element("h3", "siq-mini-title", "Commercial")
+        );
+        commercialItems.forEach(function (item) {
+          var wrapper = element("div", "siq-detail-metric");
+          wrapper.append(
+            element("span", "", item[0]),
+            element("strong", "", item[1])
+          );
+          commercialMetrics.appendChild(wrapper);
+        });
+        commercialSection.appendChild(commercialMetrics);
+        content.appendChild(commercialSection);
+      }
       if (model.engineHealth && (model.engineHealth.status === "AVAILABLE"
         || model.engineHealth.reason === "FAULT_DATA_NOT_LOADED")) {
         content.appendChild(buildEngineHealthSection());
@@ -871,6 +898,85 @@
       byId("siq-live-label").textContent = "Live data unavailable";
     }
 
+    function showConfiguredEmpty(message) {
+      var block = element("div", "siq-empty-state");
+      block.append(element("strong", "", "Configured facility"),
+        element("span", "", message
+          || "This configured facility has no active authorized devices."));
+      body.replaceChildren(block);
+      byId("siq-kpi-strip").hidden = false;
+      byId("siq-live-label").textContent = "Live · no active devices";
+    }
+
+    function showScopePrompt(message) {
+      var block = element("div", "siq-empty-state");
+      block.append(element("strong", "", "Choose a facility"),
+        element("span", "", message || "Select an authorized facility."));
+      body.replaceChildren(block);
+      byId("siq-kpi-strip").hidden = true;
+      byId("siq-live-label").textContent = "Facility selection required";
+    }
+
+    function populateScopeSelect(select, records, selectedId, placeholder) {
+      var options = [];
+      if (placeholder) {
+        options.push({ id: "", displayName: placeholder });
+      }
+      options = options.concat(records || []);
+      select.replaceChildren();
+      options.forEach(function (record) {
+        var option = element("option", "", record.displayName);
+        option.value = record.id;
+        option.selected = record.id === (selectedId || "");
+        select.appendChild(option);
+      });
+      select.value = selectedId || "";
+    }
+
+    function setScopeSelection(model, message) {
+      var scope = model || {};
+      var customerWrap = byId("siq-live-customer-selector-wrap");
+      var facilityWrap = byId("siq-live-facility-selector-wrap");
+      var controls = byId("siq-live-scope-controls");
+      var customerSelect = byId("siq-live-customer-selector");
+      var facilitySelect = byId("siq-live-facility-selector");
+      var facilities = (scope.facilities || []).filter(function (facility) {
+        return !scope.showCustomerSelector
+          || facility.customerId === scope.selectedCustomerId;
+      });
+      customerWrap.hidden = !scope.showCustomerSelector;
+      facilityWrap.hidden = !scope.showFacilitySelector;
+      controls.hidden = customerWrap.hidden && facilityWrap.hidden;
+      populateScopeSelect(customerSelect, scope.customers || [],
+        scope.selectedCustomerId, "Select customer");
+      populateScopeSelect(facilitySelect, facilities,
+        scope.selectedFacilityId, scope.showCustomerSelector
+          ? "Select facility" : null);
+      facilitySelect.disabled = scope.showCustomerSelector
+        && !scope.selectedCustomerId;
+      facilitySelect.setAttribute("aria-disabled", String(facilitySelect.disabled));
+      byId("siq-live-scope-status").textContent = message || "";
+    }
+
+    function clearScope() {
+      clearedScopeSequence += 1;
+      selectedDeviceId = null;
+      detailRefs = null;
+      currentFacility = null;
+      reportByDevice.clear();
+      appliedReportWindow = null;
+      domRows.clear();
+      registry.initialize("cleared::" + clearedScopeSequence, []);
+      byId("siq-detail-drawer").classList.remove("siq-detail-drawer--open");
+      document.querySelector(".siq-operations-layout")
+        .classList.remove("siq-operations-layout--drawer-open");
+      byId("siq-brand-context").hidden = true;
+      byId("siq-facility-context-bar").hidden = true;
+      byId("siq-kpi-strip").hidden = true;
+      byId("siq-operations-window-label").textContent = "Completed Moves";
+      body.replaceChildren();
+    }
+
     function updateFreshness(status) {
       var checked = status.checkedAt ? new Date(status.checkedAt) : null;
       var latest = status.latestFleetDataAt ? new Date(status.latestFleetDataAt) : null;
@@ -950,10 +1056,17 @@
           controller.refreshNow();
         }
       });
+      byId("siq-live-customer-selector").addEventListener("change", function () {
+        onCustomerScopeChange(this.value || null);
+      });
+      byId("siq-live-facility-selector").addEventListener("change", function () {
+        onFacilityScopeChange(this.value || null);
+      });
     }
 
     return {
       bind: bind,
+      clearScope: clearScope,
       initializeRows: initializeRows,
       applyReportResult: applyReportResult,
       patchRows: function (models) {
@@ -973,8 +1086,11 @@
       registry: registry,
       selectedDeviceId: function () { return selectedDeviceId; },
       showEmpty: showEmpty,
+      showConfiguredEmpty: showConfiguredEmpty,
       showFailure: showFailure,
       showInitialLoading: showInitialLoading,
+      showScopePrompt: showScopePrompt,
+      setScopeSelection: setScopeSelection,
       setUserContext: function (userContext) {
         currentUserContext = userContext || null;
       },

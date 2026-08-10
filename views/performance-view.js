@@ -71,6 +71,17 @@
       byId("siq-performance-facility").textContent = context.facility.displayName;
     }
 
+    function clear() {
+      context = null;
+      byId("siq-performance-timezone").textContent = "—";
+      byId("siq-performance-facility").textContent = "";
+      byId("siq-performance-status").textContent = "";
+      byId("siq-performance-window-label").textContent = "";
+      byId("siq-performance-summary-metrics").replaceChildren();
+      byId("siq-performance-unit-results").replaceChildren();
+      byId("siq-performance-results").hidden = true;
+    }
+
     function setSelection(selection) {
       var custom = selection && selection.custom || {};
       byId("siq-performance-start-date").value = custom.startDate || "";
@@ -196,6 +207,7 @@
 
     return {
       bind: bind,
+      clear: clear,
       render: render,
       setContext: setContext,
       setSelection: setSelection,

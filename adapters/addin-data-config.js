@@ -46,6 +46,9 @@
     CUSTOMER_MANAGER: "Customer Manager",
     FLEETSOURCE_ADMINISTRATOR: "Fleetsource Administrator"
   });
+  var AUTHORITY_RECORD_TYPE = "spotteriq-fleetsource-authority";
+  var AUTHORITY_ID = "fleetsource-cross-customer-selection";
+  var CROSS_CUSTOMER_SELECTION = "cross-customer-facility-selection";
 
   function apiCall(api, method, params) {
     return new Promise(function (resolve, reject) {
@@ -75,7 +78,9 @@
       findings: [],
       reconciliationFindings: [],
       configuration: null,
-      selection: null
+      selection: null,
+      selectionOptions: null,
+      authority: null
     }, extras || {});
   }
 
@@ -117,11 +122,15 @@
       ? "facility"
       : details.recordType === assetConfig.RECORD_TYPE
         ? "asset"
+        : details.recordType === AUTHORITY_RECORD_TYPE
+          ? "authority"
         : "unknown";
     var validation = kind === "facility"
       ? facilityConfig.validateFacilityDetails(details)
       : kind === "asset"
         ? assetConfig.validateAssetDetails(details)
+        : kind === "authority"
+          ? validateAuthorityDetails(details)
         : {
           ok: false,
           findings: [{
@@ -148,6 +157,15 @@
         message: "Facility record Groups must contain only its configured facility group"
       });
     }
+    if (kind === "authority" && details.authority
+      && (groupIds.length !== 1
+        || groupIds[0] !== details.authority.myGeotabGroupId)) {
+      findings.push({
+        path: "groups",
+        code: "AUTHORITY_GROUP_SCOPE_MISMATCH",
+        message: "Authority record Groups must contain only its dedicated Company Group"
+      });
+    }
     return {
       ok: validation.ok && findings.length === 0,
       kind: kind,
@@ -170,6 +188,52 @@
     };
   }
 
+  function validateAuthorityDetails(details) {
+    var findings = [];
+    var authority = details && details.authority;
+    var capabilities = authority && authority.capabilities;
+    if (!details || details.schemaVersion !== 2) {
+      findings.push({
+        path: "schemaVersion",
+        code: "INVALID_AUTHORITY_SCHEMA_VERSION",
+        message: "Authority schemaVersion must be 2"
+      });
+    }
+    if (!authority || authority.id !== AUTHORITY_ID) {
+      findings.push({
+        path: "authority.id",
+        code: "INVALID_AUTHORITY_ID",
+        message: "Authority id is not recognized"
+      });
+    }
+    if (!authority || typeof authority.myGeotabGroupId !== "string"
+      || !authority.myGeotabGroupId) {
+      findings.push({
+        path: "authority.myGeotabGroupId",
+        code: "AUTHORITY_GROUP_REQUIRED",
+        message: "Authority requires its dedicated MyGeotab Company Group id"
+      });
+    }
+    if (!Array.isArray(capabilities)
+      || capabilities.length !== 1
+      || capabilities[0] !== CROSS_CUSTOMER_SELECTION) {
+      findings.push({
+        path: "authority.capabilities",
+        code: "INVALID_AUTHORITY_CAPABILITIES",
+        message: "Authority may grant only cross-customer facility selection"
+      });
+    }
+    if (authority && (authority.canCommissionSpotterIQ === true
+      || authority.canWriteAddInData === true)) {
+      findings.push({
+        path: "authority",
+        code: "COMMISSIONING_AUTHORITY_NOT_ALLOWED",
+        message: "Cross-customer selection authority cannot grant AddInData write access"
+      });
+    }
+    return { ok: findings.length === 0, findings: findings };
+  }
+
   function duplicates(records, key) {
     var seen = new Set();
     return records.filter(function (record) {
@@ -190,39 +254,46 @@
     };
   }
 
-  function authorizedFacilities(records, context) {
-    var user = context && context.userContext || {};
-    var role = user.role || ROLES.CUSTOMER_VIEWER;
-    var scoped = records.slice();
-    if ((role === ROLES.CUSTOMER_VIEWER || role === ROLES.CUSTOMER_MANAGER)
-      && user.customerId) {
-      scoped = scoped.filter(function (record) {
-        return record.customerId === user.customerId;
-      });
-    }
-    if (context && context.applyActiveGroupFilter === true
-      && Array.isArray(context.activeGroupIds)
-      && context.activeGroupIds.length) {
-      var active = new Set(context.activeGroupIds);
-      scoped = scoped.filter(function (record) {
-        return record.groupIds.some(function (groupId) {
-          return active.has(groupId);
+  function selectionOptions(records, selected, authority) {
+    var customers = [];
+    records.forEach(function (record) {
+      if (!customers.some(function (customer) {
+        return customer.id === record.customerId;
+      })) {
+        customers.push({
+          id: record.customerId,
+          displayName: record.record.details.customer.displayName
         });
-      });
-    }
-    return scoped;
+      }
+    });
+    return {
+      customers: customers,
+      facilities: records.map(function (record) {
+        return {
+          id: record.facilityId,
+          customerId: record.customerId,
+          displayName: record.record.details.facility.displayName,
+          myGeotabGroupId: record.record.details.facility.myGeotabGroupId
+        };
+      }),
+      selectedCustomerId: selected.customerId,
+      selectedFacilityId: selected.facilityId,
+      showCustomerSelector: authority.canSelectAcrossCustomers === true,
+      showFacilitySelector: authority.canSelectAcrossCustomers === true
+        || records.length > 1
+    };
   }
 
-  function selectFacility(records, context) {
-    var user = context && context.userContext || {};
-    var role = user.role || ROLES.CUSTOMER_VIEWER;
+  function selectFacility(records, context, authority) {
     var selected = explicitSelection(context);
-    if (role === ROLES.FLEETSOURCE_ADMINISTRATOR
-      && user.canCommissionSpotterIQ === true) {
+    var options = selectionOptions(records, selected, authority);
+    if (authority.canSelectAcrossCustomers === true) {
       if (!selected.customerId || !selected.facilityId) {
         return stateResult("administrator-selection-required",
           "Select an authorized customer and facility.", {
-            authorizedRecords: records
+            authorizedRecords: records,
+            selectionOptions: options,
+            authority: authority
           });
       }
     }
@@ -235,14 +306,33 @@
         ? { ok: true, selected: match, authorized: records }
         : stateResult("invalid-facility-selection",
           "No authorized customer and facility match the selection.", {
-            authorizedRecords: records
+            authorizedRecords: records,
+            selectionOptions: options,
+            authority: authority
           });
     }
     if (records.length === 1) {
       return { ok: true, selected: records[0], authorized: records };
     }
+    if (context && context.applyActiveGroupFilter === true
+      && Array.isArray(context.activeGroupIds)
+      && context.activeGroupIds.length) {
+      var active = new Set(context.activeGroupIds);
+      var activeMatches = records.filter(function (record) {
+        return record.groupIds.some(function (groupId) {
+          return active.has(groupId);
+        });
+      });
+      if (activeMatches.length === 1) {
+        return { ok: true, selected: activeMatches[0], authorized: records };
+      }
+    }
     return stateResult("facility-selection-required",
-      "Select an authorized facility.", { authorizedRecords: records });
+      "Select an authorized facility.", {
+        authorizedRecords: records,
+        selectionOptions: options,
+        authority: authority
+      });
   }
 
   function mergeRuntimeConfigurations(facilityRecords, assetRecords, context) {
@@ -362,6 +452,9 @@
     var validAssets = validated.filter(function (record) {
       return record.ok && record.kind === "asset";
     });
+    var validAuthorities = validated.filter(function (record) {
+      return record.ok && record.kind === "authority";
+    });
     if (invalid.some(function (record) {
       return record.findings.some(function (entry) {
         return entry.code === "LEGACY_SCHEMA_VERSION";
@@ -386,6 +479,14 @@
         "Duplicate SpotterIQ asset profile", {
           records: records,
           findings: invalid.concat(duplicates(validAssets, "assetId"))
+      });
+    }
+    if (validAuthorities.length > 1) {
+      return stateResult("duplicate-authority-record",
+        "SpotterIQ Fleetsource authority is ambiguous.", {
+          records: records,
+          findings: invalid.concat(validAuthorities),
+          errorCategory: "validation"
         });
     }
     var aggregateAssets = assetIdentity.validateAssetProfiles(
@@ -401,7 +502,22 @@
           errorCategory: "validation"
         });
     }
-    var facilities = authorizedFacilities(validFacilities, context || {});
+    var authorityRecord = validAuthorities[0] || null;
+    var authority = authorityRecord ? {
+      role: ROLES.FLEETSOURCE_ADMINISTRATOR,
+      canSelectAcrossCustomers: true,
+      canCommissionSpotterIQ: false,
+      recordId: authorityRecord.entityId,
+      myGeotabGroupId:
+        authorityRecord.record.details.authority.myGeotabGroupId
+    } : {
+      role: ROLES.CUSTOMER_VIEWER,
+      canSelectAcrossCustomers: false,
+      canCommissionSpotterIQ: false,
+      recordId: null,
+      myGeotabGroupId: null
+    };
+    var facilities = validFacilities.slice();
     if (!facilities.length) {
       return stateResult(
         invalid.length ? "invalid-facility-configuration" : "not-configured",
@@ -415,7 +531,19 @@
         }
       );
     }
-    var selected = selectFacility(facilities, context || {});
+    var customerIdsForUser = new Set(facilities.map(function (record) {
+      return record.customerId;
+    }));
+    if (!authority.canSelectAcrossCustomers && customerIdsForUser.size > 1) {
+      return stateResult("cross-customer-authority-required",
+        "SpotterIQ customer scope is ambiguous.", {
+          records: records,
+          findings: invalid,
+          errorCategory: "authorization",
+          authority: authority
+        });
+    }
+    var selected = selectFacility(facilities, context || {}, authority);
     if (!selected.ok) {
       selected.records = records;
       selected.findings = invalid;
@@ -449,6 +577,15 @@
       findings: invalid,
       reconciliationFindings: runtime.reconciliationFindings,
       configuration: runtime,
+      selectionOptions: selectionOptions(
+        selected.authorized,
+        {
+          customerId: selected.selected.customerId,
+          facilityId: selected.selected.facilityId
+        },
+        authority
+      ),
+      authority: authority,
       selection: {
         ok: true,
         customer: runtime.customers.find(function (item) {
@@ -457,7 +594,7 @@
         facility: runtime.facilities.find(function (item) {
           return item.id === selectedDetails.facility.id;
         }),
-        user: Object.assign({}, context && context.userContext || {})
+        user: Object.assign({}, context && context.userContext || {}, authority)
       },
       selectedRecord: selected.selected,
       errorCategory: invalid.length ? "validation" : null
@@ -465,6 +602,9 @@
   }
 
   return {
+    AUTHORITY_ID: AUTHORITY_ID,
+    AUTHORITY_RECORD_TYPE: AUTHORITY_RECORD_TYPE,
+    CROSS_CUSTOMER_SELECTION: CROSS_CUSTOMER_SELECTION,
     ROLES: ROLES,
     loadFacilityConfiguration: loadFacilityConfiguration,
     mergeRuntimeConfigurations: mergeRuntimeConfigurations,
