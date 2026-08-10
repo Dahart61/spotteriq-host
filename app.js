@@ -163,9 +163,119 @@
       module.replaceChildren(heading, form, status, results);
     }
 
+    function renderLiveReports() {
+      var module = productionById("siq-module-reports");
+      function identify(node, id) {
+        node.id = id;
+        return node;
+      }
+      function field(labelText, id, type) {
+        var wrapper = productionElement("div", "siq-field");
+        var label = productionElement("label", "", labelText);
+        label.setAttribute("for", id);
+        var control = identify(productionElement("input"), id);
+        control.type = type;
+        wrapper.append(label, control);
+        return wrapper;
+      }
+      function contextValue(label, id) {
+        var block = productionElement("div", "siq-timezone-block");
+        block.append(
+          productionElement("span", "siq-analysis-label", label),
+          identify(productionElement("strong", "", "Unavailable"), id)
+        );
+        return block;
+      }
+
+      var heading = productionElement("div", "siq-module-heading");
+      var headingCopy = productionElement("div");
+      headingCopy.append(
+        productionElement("h1", "siq-screen-title", "Reports"),
+        productionElement(
+          "p", "siq-screen-note",
+          "Operational reports for the selected facility and exact reporting window."
+        )
+      );
+      heading.appendChild(headingCopy);
+
+      var form = identify(
+        productionElement("form", "siq-scope-bar siq-live-report-command-bar"),
+        "siq-report-live-form"
+      );
+      var context = productionElement("div", "siq-live-report-context");
+      context.append(
+        contextValue("Customer", "siq-report-live-customer"),
+        contextValue("Facility", "siq-report-live-facility"),
+        contextValue("Timezone", "siq-report-live-timezone")
+      );
+      var custom = productionElement("div", "siq-custom-range siq-live-report-range");
+      custom.append(
+        field("Start Date", "siq-report-live-start-date", "date"),
+        field("Start Time", "siq-report-live-start-time", "time"),
+        field("End Date", "siq-report-live-end-date", "date"),
+        field("End Time", "siq-report-live-end-time", "time")
+      );
+      var actions = productionElement("div", "siq-scope-actions siq-live-report-actions");
+      var load = productionElement("button", "siq-button siq-button--primary", "Load Report");
+      load.type = "submit";
+      var refresh = identify(
+        productionElement("button", "siq-button", "Refresh"),
+        "siq-report-live-refresh"
+      );
+      refresh.type = "button";
+      actions.append(load, refresh);
+      form.append(context, custom, actions);
+
+      var tabs = productionElement("div", "siq-report-tabs");
+      tabs.setAttribute("role", "tablist");
+      [
+        ["productivity", "Productivity"],
+        ["moves", "Trailer Moves"],
+        ["fuel", "Fuel & Engine Use"],
+        ["speed", "Speed Activity"]
+      ].forEach(function (item, index) {
+        var button = productionElement(
+          "button",
+          "siq-report-tab" + (index === 0 ? " siq-report-tab--active" : ""),
+          item[1]
+        );
+        button.type = "button";
+        button.setAttribute("role", "tab");
+        button.setAttribute("data-live-report", item[0]);
+        button.setAttribute("aria-selected", String(index === 0));
+        tabs.appendChild(button);
+      });
+
+      var status = identify(
+        productionElement("p", "siq-status-message siq-live-report-status"),
+        "siq-report-live-status"
+      );
+      status.setAttribute("aria-live", "polite");
+      var results = identify(
+        productionElement("section", "siq-live-report-results"),
+        "siq-report-live-results"
+      );
+      results.hidden = true;
+      var resultHeading = productionElement("div", "siq-summary-band__heading");
+      resultHeading.append(
+        productionElement("span", "siq-context-label", "Facility report"),
+        identify(productionElement("h2", "siq-section-title", "Productivity"),
+          "siq-report-live-title"),
+        identify(productionElement("span", "siq-summary-scope"),
+          "siq-report-live-window-label")
+      );
+      results.append(
+        resultHeading,
+        identify(productionElement("div", "siq-shift-summary-metrics"),
+          "siq-report-live-summary"),
+        identify(productionElement("div"), "siq-report-live-table")
+      );
+      module.replaceChildren(heading, form, tabs, status, results);
+    }
+
     function showProductionModule(moduleName) {
       var app = document.querySelector(".siq-app");
-      var requested = ["reports", "settings"].indexOf(moduleName) !== -1
+      var requested = moduleName === "settings"
         ? "operations" : moduleName;
       app.querySelectorAll("[data-module-panel]").forEach(function (panel) {
         panel.classList.toggle(
@@ -225,16 +335,8 @@
       productionById("siq-operations-title").nextElementSibling.textContent =
         "Current yard status from MyGeotab.";
       renderLivePerformance();
-      renderHistoricalUnavailable(
-        "siq-module-reports",
-        "Reports",
-        "Report generation remains unavailable until facility reporting is configured.",
-        "report"
-      );
+      renderLiveReports();
       app.querySelectorAll("[data-module]").forEach(function (button) {
-        if (button.getAttribute("data-module") === "reports") {
-          button.hidden = true;
-        }
         button.addEventListener("click", function () {
           showProductionModule(button.getAttribute("data-module"));
         });

@@ -3743,6 +3743,172 @@
   }
 }
 
+/* Live Reports reuses the exact-window Performance result and compact surfaces. */
+.siq-live-report-command-bar {
+  display: grid;
+  grid-template-columns: minmax(410px, 1fr) minmax(500px, 1.45fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.siq-live-report-context {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(125px, 1fr));
+  min-width: 0;
+}
+
+.siq-live-report-context .siq-timezone-block:first-child {
+  border-left: 0;
+}
+
+.siq-live-report-range {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(112px, 1fr));
+}
+
+.siq-live-report-range .siq-field {
+  min-width: 0;
+}
+
+.siq-live-report-actions {
+  margin-left: 0;
+}
+
+.siq-report-tabs {
+  display: flex;
+  gap: 0;
+  margin: 10px 0 12px;
+  border-bottom: 1px solid var(--siq-line-strong);
+}
+
+.siq-report-tab {
+  min-height: 34px;
+  padding: 7px 15px;
+  border: 0;
+  border-right: 1px solid var(--siq-line);
+  border-bottom: 3px solid transparent;
+  background: var(--siq-surface-level-1);
+  color: var(--siq-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .025em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.siq-report-tab:hover {
+  background: var(--siq-hover);
+  color: var(--siq-text);
+}
+
+.siq-report-tab--active {
+  border-bottom-color: var(--siq-accent);
+  color: var(--siq-text);
+}
+
+.siq-live-report-status {
+  min-height: 18px;
+  margin: 0 0 8px;
+}
+
+.siq-live-report-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--siq-line-strong);
+  border-radius: 8px;
+}
+
+.siq-live-report-table {
+  width: 100%;
+  min-width: 780px;
+  border-collapse: collapse;
+  table-layout: auto;
+  background: var(--siq-surface-table-body);
+  font-size: 12px;
+}
+
+.siq-live-report-table th,
+.siq-live-report-table td {
+  padding: 9px 10px;
+  border-right: 1px solid var(--siq-line);
+  border-bottom: 1px solid var(--siq-line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.siq-live-report-table th:last-child,
+.siq-live-report-table td:last-child {
+  border-right: 0;
+}
+
+.siq-live-report-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.siq-live-report-table th {
+  background: var(--siq-surface-level-3);
+  color: var(--siq-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .035em;
+  text-transform: uppercase;
+}
+
+.siq-live-report-table tbody tr:nth-child(even) {
+  background: var(--siq-surface-table-alt);
+}
+
+.siq-live-report-table .siq-live-report-numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.siq-live-report-empty,
+.siq-live-report-note {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--siq-line-strong);
+  background: var(--siq-surface-level-1);
+  color: var(--siq-muted);
+  font-size: 12px;
+}
+
+.siq-live-report-note {
+  grid-column: 1 / -1;
+  border-color: var(--siq-line);
+  border-left: 3px solid var(--siq-info);
+}
+
+@media (max-width: 1180px) {
+  .siq-live-report-command-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .siq-live-report-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 680px) {
+  .siq-live-report-context,
+  .siq-live-report-range {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .siq-report-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .siq-report-tab {
+    border-bottom: 1px solid var(--siq-line);
+  }
+
+  .siq-report-tab--active {
+    box-shadow: inset 0 -3px var(--siq-accent);
+  }
+}
+
 @media (max-width: 620px) {
   .siq-shift-unit-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .siq-shift-summary-metrics,

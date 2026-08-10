@@ -20,6 +20,9 @@
     var performanceView = null;
     var performanceController = null;
     var performanceNavigationBound = false;
+    var reportsView = null;
+    var reportsController = null;
+    var reportsNavigationBound = false;
     var controllerConfigurationKey = null;
     var visibilityHandler = null;
     var commissioningView = null;
@@ -73,6 +76,9 @@
       if (performanceController
         && typeof performanceController.clear === "function") {
         performanceController.clear();
+      }
+      if (reportsController && typeof reportsController.clear === "function") {
+        reportsController.clear();
       }
       if (view && typeof view.clearScope === "function") {
         view.clearScope();
@@ -212,6 +218,20 @@
         facility: result.facility,
         devices: result.devices
       });
+      if (!reportsView) {
+        reportsView = root.SIQ_REPORTS_VIEW.createReportsDomView(root.document);
+        reportsController = root.SIQ_REPORTS_CONTROLLER.createReportsController({
+          view: reportsView,
+          performanceController: performanceController
+        });
+        reportsView.bind(reportsController);
+      }
+      reportsController.focus({
+        api: api,
+        customer: result.customer,
+        facility: result.facility,
+        devices: result.devices
+      });
       if (!result.devices.length
         && typeof performanceView.showError === "function") {
         performanceView.showError(
@@ -225,9 +245,20 @@
           performanceController.open();
         });
       }
+      if (!reportsNavigationBound) {
+        reportsNavigationBound = true;
+        var reportsButton = root.document.querySelector('[data-module="reports"]');
+        reportsButton.addEventListener("click", function () {
+          reportsController.open();
+        });
+      }
       var panel = root.document.getElementById("siq-module-performance");
       if (panel && panel.classList.contains("siq-module--active")) {
         performanceController.open();
+      }
+      var reportsPanel = root.document.getElementById("siq-module-reports");
+      if (reportsPanel && reportsPanel.classList.contains("siq-module--active")) {
+        reportsController.open();
       }
     }
 
@@ -535,6 +566,9 @@
       if (performanceController
         && typeof performanceController.clear === "function") {
         performanceController.clear();
+      }
+      if (reportsController && typeof reportsController.clear === "function") {
+        reportsController.clear();
       }
       updateCommissioning({ refreshState: "Paused" });
     }

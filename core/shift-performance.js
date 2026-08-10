@@ -82,7 +82,7 @@
     return Number.isFinite(raw) && raw >= 0 ? raw * KPH_TO_MPH : null;
   }
 
-  function countVerifiedMoves(fifthWheelRecords, speedRecords) {
+  function verifiedMoveRecords(fifthWheelRecords, speedRecords) {
     var jaw = sorted(fifthWheelRecords).map(function (record) {
       return { time: recordTime(record), value: booleanLevel(valueOf(record, "data", "Data")) };
     }).filter(function (record) { return record.value !== null; });
@@ -92,7 +92,7 @@
     if (jaw.length < 2 || !speeds.length) {
       return null;
     }
-    var moves = 0;
+    var moves = [];
     var previous = null;
     var candidate = null;
     jaw.forEach(function (observation) {
@@ -102,19 +102,34 @@
       if (observation.value === true && previous === false) {
         candidate = { coupledAt: observation.time, moved: false };
       } else if (observation.value === false && previous === true && candidate) {
-        candidate.moved = speeds.some(function (speed) {
+        var movement = speeds.filter(function (speed) {
           return speed.time >= candidate.coupledAt
             && speed.time <= observation.time
             && speed.mph >= MOVING_MPH;
         });
+        candidate.moved = movement.length > 0;
         if (candidate.moved) {
-          moves += 1;
+          moves.push({
+            couplingTimestamp: new Date(candidate.coupledAt).toISOString(),
+            completionTimestamp: new Date(observation.time).toISOString(),
+            durationMinutes: (observation.time - candidate.coupledAt) / 60000,
+            qualifyingSpeedObservationCount: movement.length,
+            peakCoupledSpeedMph: movement.reduce(function (maximum, speed) {
+              return Math.max(maximum, speed.mph);
+            }, 0),
+            movementSpeedThresholdMph: MOVING_MPH
+          });
         }
         candidate = null;
       }
       previous = observation.value;
     });
     return moves;
+  }
+
+  function countVerifiedMoves(fifthWheelRecords, speedRecords) {
+    var records = verifiedMoveRecords(fifthWheelRecords, speedRecords);
+    return records === null ? null : records.length;
   }
 
   function cumulativeDelta(records, multiplier) {
@@ -250,14 +265,18 @@
     var productiveHours = Math.max(
       0, buckets.engineRunningMinutes - buckets.idleMinutes
     ) / 60;
-    var speedObservations = sorted(data.speed);
-    var maxSpeedMph = speedObservations.length ? speedObservations.reduce(function (maximum, record) {
-      var mph = speedMph(record);
-      return mph === null ? maximum : Math.max(maximum, mph);
-    }, 0) : null;
+    var speedObservations = sorted(data.speed).map(function (record) {
+      return { timestamp: new Date(recordTime(record)).toISOString(), mph: speedMph(record) };
+    }).filter(function (observation) { return observation.mph !== null; });
+    var peakSpeed = speedObservations.length ? speedObservations.reduce(function (maximum, observation) {
+      return observation.mph > maximum.mph ? observation : maximum;
+    }) : null;
+    var maxSpeedMph = peakSpeed ? peakSpeed.mph : null;
     var classifiedMinutes = buckets.movingMinutes + buckets.idleMinutes
       + buckets.keyOnMinutes + buckets.engineOffMinutes + buckets.stoppedMinutes;
-    var moves = capable ? countVerifiedMoves(data.fifthWheel, data.speed) : null;
+    var moveRecords = capable
+      ? verifiedMoveRecords(data.fifthWheel, data.speed) : null;
+    var moves = moveRecords === null ? null : moveRecords.length;
 
     return Object.assign({
       deviceId: device.deviceId,
@@ -272,12 +291,15 @@
       idlePercent: buckets.engineRunningMinutes > 0
         ? buckets.idleMinutes / buckets.engineRunningMinutes * 100 : null,
       fuelGallons: fuelGallons,
+      engineHoursDelta: engineHours,
       idleFuelGallons: idleFuelGallons,
       idleFuelEstimated: idleFuelGallons !== null,
       productiveFuelGallons: productiveFuel,
       gallonsPerProductiveHour: productiveFuel !== null && productiveHours > 0
         ? productiveFuel / productiveHours : null,
       maxSpeedMph: maxSpeedMph,
+      peakSpeedTimestamp: peakSpeed ? peakSpeed.timestamp : null,
+      verifiedMoveRecords: moveRecords,
       coupledAverageMovingSpeedMph: buckets.coupledMovingMinutes > 0
         ? buckets.coupledDistanceMiles / (buckets.coupledMovingMinutes / 60) : null,
       uncoupledAverageMovingSpeedMph: buckets.uncoupledMovingMinutes > 0
@@ -354,6 +376,7 @@
     countVerifiedMoves: countVerifiedMoves,
     cumulativeDelta: cumulativeDelta,
     facilitySummary: facilitySummary,
+    verifiedMoveRecords: verifiedMoveRecords,
     resolveWindow: resolveWindow
   };
 }));
