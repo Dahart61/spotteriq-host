@@ -3873,6 +3873,10 @@
   font-size: 12px;
 }
 
+.siq-report-print-header {
+  display: none;
+}
+
 .siq-live-report-note {
   grid-column: 1 / -1;
   border-color: var(--siq-line);
@@ -3906,6 +3910,170 @@
 
   .siq-report-tab--active {
     box-shadow: inset 0 -3px var(--siq-accent);
+  }
+}
+
+@media print {
+  .siq-app {
+    min-height: 0 !important;
+    background: #fff !important;
+    color: #17212b !important;
+    color-scheme: light;
+  }
+
+  .siq-app {
+    --siq-surface-level-0: #fff;
+    --siq-surface-level-1: #fff;
+    --siq-surface-level-2: #f6f7f8;
+    --siq-surface-level-3: #e8ebed;
+    --siq-surface-table-body: #fff;
+    --siq-surface-table-alt: #f6f7f8;
+    --siq-line: #c7cdd2;
+    --siq-line-strong: #8f99a1;
+    --siq-text: #17212b;
+    --siq-muted: #4e5963;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .siq-app .siq-skip-link,
+  .siq-app .siq-workspace-header,
+  .siq-app .siq-live-scope-controls,
+  .siq-app .siq-facility-context-bar,
+  .siq-app .siq-facility-context-error,
+  .siq-app #siq-module-operations,
+  .siq-app #siq-module-performance,
+  .siq-app #siq-module-settings,
+  .siq-app #siq-module-reports > .siq-module-heading,
+  .siq-app .siq-live-report-command-bar,
+  .siq-app .siq-report-tabs,
+  .siq-app .siq-live-report-status,
+  .siq-app .siq-shift-unit-detail summary,
+  .siq-app button,
+  .siq-app select,
+  .siq-app input {
+    display: none !important;
+  }
+
+  .siq-app .siq-main {
+    padding: 0 !important;
+  }
+
+  .siq-app #siq-module-reports,
+  .siq-app .siq-live-report-results {
+    display: block !important;
+  }
+
+  .siq-app .siq-live-report-results > .siq-summary-band__heading {
+    display: none !important;
+  }
+
+  .siq-app .siq-report-print-header[hidden] {
+    display: block !important;
+  }
+
+  .siq-app .siq-report-print-header {
+    margin: 0 0 14px;
+    padding: 0 0 10px;
+    border-bottom: 2px solid #39434c;
+  }
+
+  .siq-app .siq-report-print-brand {
+    margin-bottom: 7px;
+    font-size: 11pt;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+  }
+
+  .siq-app .siq-report-print-customer,
+  .siq-app .siq-report-print-facility {
+    margin-top: 2px;
+    font-size: 10pt;
+    font-weight: 700;
+  }
+
+  .siq-app .siq-report-print-title {
+    margin: 8px 0 3px;
+    font-size: 18pt;
+  }
+
+  .siq-app .siq-report-print-window,
+  .siq-app .siq-report-print-meta {
+    margin: 2px 0 0;
+    color: #39434c;
+    font-size: 8.5pt;
+  }
+
+  .siq-app .siq-shift-summary-metrics {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    margin: 0 0 12px;
+    border-color: #8f99a1;
+    border-radius: 0;
+    background: #c7cdd2;
+    break-inside: avoid;
+  }
+
+  .siq-app .siq-shift-kpi {
+    min-height: 0;
+    padding: 7px 9px;
+    background: #fff;
+  }
+
+  .siq-app .siq-shift-kpi__label {
+    color: #4e5963;
+    font-size: 7.5pt;
+  }
+
+  .siq-app .siq-shift-kpi__value {
+    color: #17212b;
+    font-size: 12pt;
+  }
+
+  .siq-app .siq-live-report-table-scroll {
+    max-width: none;
+    overflow: visible;
+    border-color: #8f99a1;
+    border-radius: 0;
+  }
+
+  .siq-app .siq-live-report-table {
+    width: 100%;
+    min-width: 0;
+    background: #fff;
+    color: #17212b;
+    font-size: 8pt;
+    table-layout: auto;
+  }
+
+  .siq-app .siq-live-report-table th,
+  .siq-app .siq-live-report-table td {
+    padding: 5px 6px;
+    border-color: #c7cdd2;
+    color: #17212b;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .siq-app .siq-live-report-table th {
+    background: #e8ebed;
+    color: #28343e;
+    font-size: 7pt;
+  }
+
+  .siq-app .siq-live-report-table thead {
+    display: table-header-group;
+  }
+
+  .siq-app .siq-live-report-table tr {
+    break-inside: avoid;
+  }
+
+  .siq-app .siq-live-report-empty,
+  .siq-app .siq-live-report-note {
+    padding: 9px;
+    border-color: #8f99a1;
+    background: #fff;
+    color: #39434c;
   }
 }
 

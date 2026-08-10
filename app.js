@@ -223,7 +223,19 @@
         "siq-report-live-refresh"
       );
       refresh.type = "button";
-      actions.append(load, refresh);
+      var print = identify(
+        productionElement("button", "siq-button", "Print"),
+        "siq-report-live-print"
+      );
+      print.type = "button";
+      print.disabled = true;
+      var exportCsv = identify(
+        productionElement("button", "siq-button", "Export CSV"),
+        "siq-report-live-export-csv"
+      );
+      exportCsv.type = "button";
+      exportCsv.disabled = true;
+      actions.append(load, refresh, print, exportCsv);
       form.append(context, custom, actions);
 
       var tabs = productionElement("div", "siq-report-tabs");
@@ -256,6 +268,23 @@
         "siq-report-live-results"
       );
       results.hidden = true;
+      var printHeader = productionElement("header", "siq-report-print-header");
+      printHeader.hidden = true;
+      printHeader.append(
+        productionElement("div", "siq-report-print-brand", "SpotterIQ by Fleetsource"),
+        identify(productionElement("div", "siq-report-print-customer"),
+          "siq-report-print-customer"),
+        identify(productionElement("div", "siq-report-print-facility"),
+          "siq-report-print-facility"),
+        identify(productionElement("h1", "siq-report-print-title"),
+          "siq-report-print-title"),
+        identify(productionElement("p", "siq-report-print-window"),
+          "siq-report-print-window"),
+        identify(productionElement("p", "siq-report-print-meta"),
+          "siq-report-print-timezone"),
+        identify(productionElement("p", "siq-report-print-meta"),
+          "siq-report-print-generated")
+      );
       var resultHeading = productionElement("div", "siq-summary-band__heading");
       resultHeading.append(
         productionElement("span", "siq-context-label", "Facility report"),
@@ -265,6 +294,7 @@
           "siq-report-live-window-label")
       );
       results.append(
+        printHeader,
         resultHeading,
         identify(productionElement("div", "siq-shift-summary-metrics"),
           "siq-report-live-summary"),

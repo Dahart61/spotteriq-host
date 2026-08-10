@@ -16,9 +16,197 @@
     speed: "Speed Activity"
   });
 
+  function duration(minutes) {
+    if (!Number.isFinite(minutes)) { return "Unavailable"; }
+    var rounded = Math.round(minutes);
+    return Math.floor(rounded / 60) + "h "
+      + String(rounded % 60).padStart(2, "0") + "m";
+  }
+
+  function percent(value) {
+    return Number.isFinite(value) ? value.toFixed(0) + "%" : "Unavailable";
+  }
+
+  function gallons(value, estimated) {
+    return Number.isFinite(value)
+      ? value.toFixed(1) + " gal" + (estimated ? " est." : "")
+      : "Unavailable";
+  }
+
+  function speed(value) {
+    return Number.isFinite(value) ? value.toFixed(1) + " mph" : "Unavailable";
+  }
+
+  function hours(value) {
+    return Number.isFinite(value) ? value.toFixed(2) + " hr" : "Unavailable";
+  }
+
+  function timestamp(value, timeZone) {
+    if (!value) { return "Unavailable"; }
+    return new Date(value).toLocaleString([], {
+      timeZone: timeZone,
+      month: "short", day: "numeric", year: "numeric",
+      hour: "numeric", minute: "2-digit", second: "2-digit"
+    });
+  }
+
+  function windowLabel(window) {
+    return timestamp(window.startUtc, window.timezone) + " - "
+      + timestamp(window.endUtc, window.timezone);
+  }
+
+  function movementEvidence(move) {
+    return move.qualifyingSpeedObservationCount + " observation"
+      + (move.qualifyingSpeedObservationCount === 1 ? "" : "s")
+      + " at/above " + move.movementSpeedThresholdMph.toFixed(1)
+      + " mph; peak " + move.peakCoupledSpeedMph.toFixed(1) + " mph";
+  }
+
+  function orderedUnits(result) {
+    return (result && Array.isArray(result.units) ? result.units : [])
+      .slice().sort(function (left, right) {
+        return left.displayName.localeCompare(right.displayName);
+      });
+  }
+
+  function available(value, formatter) {
+    return Number.isFinite(value) ? formatter(value) : "";
+  }
+
+  function reportData(result, reportType) {
+    var units = orderedUnits(result);
+    if (reportType === "moves") {
+      var moveRows = [];
+      units.forEach(function (unit) {
+        (unit.verifiedMoveRecords || []).forEach(function (move) {
+          moveRows.push([
+            unit.displayName,
+            timestamp(move.couplingTimestamp, result.window.timezone),
+            timestamp(move.completionTimestamp, result.window.timezone),
+            available(move.durationMinutes, duration),
+            movementEvidence(move)
+          ]);
+        });
+      });
+      return {
+        headers: [
+          "Unit", "Move Start", "Move Completed", "Duration",
+          "Coupled Movement Evidence"
+        ],
+        rows: moveRows
+      };
+    }
+    if (reportType === "fuel") {
+      return {
+        headers: [
+          "Unit", "Engine Running", "Fuel Used", "Estimated Idle Fuel",
+          "Productive Fuel", "Engine Hours Meter Delta"
+        ],
+        rows: units.map(function (unit) {
+          return [
+            unit.displayName,
+            available(unit.engineRunningMinutes, duration),
+            available(unit.fuelGallons, function (value) { return gallons(value, false); }),
+            available(unit.idleFuelGallons, function (value) { return gallons(value, true); }),
+            available(unit.productiveFuelGallons, function (value) { return gallons(value, false); }),
+            available(unit.engineHoursDelta, hours)
+          ];
+        })
+      };
+    }
+    if (reportType === "speed") {
+      return {
+        headers: ["Unit", "Peak Speed", "Peak Timestamp"],
+        rows: units.map(function (unit) {
+          return [
+            unit.displayName,
+            available(unit.maxSpeedMph, speed),
+            unit.peakSpeedTimestamp
+              ? timestamp(unit.peakSpeedTimestamp, result.window.timezone) : ""
+          ];
+        })
+      };
+    }
+    return {
+      headers: [
+        "Unit", "Engine Running", "Moving", "Engine Running Stationary",
+        "Utilization", "Max Speed", "Completed Moves"
+      ],
+      rows: units.map(function (unit) {
+        return [
+          unit.displayName,
+          available(unit.engineRunningMinutes, duration),
+          available(unit.movingMinutes, duration),
+          available(unit.idleMinutes, duration),
+          available(unit.utilizationPercent, percent),
+          available(unit.maxSpeedMph, speed),
+          Number.isFinite(unit.moveCount) ? String(unit.moveCount) : ""
+        ];
+      })
+    };
+  }
+
+  function csvEscape(value) {
+    var text = value === null || value === undefined ? "" : String(value);
+    return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  }
+
+  function csvLine(values) {
+    return values.map(csvEscape).join(",");
+  }
+
+  function csvDocument(result, context, reportType) {
+    var data = reportData(result, reportType);
+    var lines = [
+      csvLine(["Customer", context.customer.displayName]),
+      csvLine(["Facility", context.facility.displayName]),
+      csvLine(["Report", TITLES[reportType] + " Report"]),
+      csvLine(["Start", timestamp(result.window.startUtc, result.window.timezone)]),
+      csvLine(["End", timestamp(result.window.endUtc, result.window.timezone)]),
+      csvLine(["Timezone", result.window.timezone]),
+      "",
+      csvLine(data.headers)
+    ];
+    data.rows.forEach(function (row) { lines.push(csvLine(row)); });
+    return lines.join("\r\n") + "\r\n";
+  }
+
+  function filenameToken(value) {
+    return String(value || "")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/&/g, " and ")
+      .replace(/[\u2018\u2019']/g, "")
+      .replace(/[^A-Za-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "Report";
+  }
+
+  function localDateToken(value, timeZone) {
+    var parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timeZone, year: "numeric", month: "2-digit", day: "2-digit"
+    }).formatToParts(new Date(value));
+    var values = {};
+    parts.forEach(function (part) { values[part.type] = part.value; });
+    return values.year + "-" + values.month + "-" + values.day;
+  }
+
+  function reportFilename(result, context, reportType) {
+    return [
+      "SpotterIQ",
+      filenameToken(context.customer.displayName),
+      filenameToken(context.facility.displayName),
+      filenameToken(TITLES[reportType]),
+      localDateToken(result.window.startUtc, result.window.timezone)
+    ].join("_") + ".csv";
+  }
+
   function createReportsDomView(document) {
     var controller = null;
     var context = null;
+    var windowObject = document.defaultView
+      || (typeof globalThis !== "undefined" ? globalThis : null);
+    var printing = false;
+    var exporting = false;
 
     function byId(id) { return document.getElementById(id); }
     function element(tag, className, value) {
@@ -26,38 +214,6 @@
       if (className) { node.className = className; }
       if (value !== undefined) { node.textContent = value; }
       return node;
-    }
-    function duration(minutes) {
-      if (!Number.isFinite(minutes)) { return "Unavailable"; }
-      var rounded = Math.round(minutes);
-      return Math.floor(rounded / 60) + "h "
-        + String(rounded % 60).padStart(2, "0") + "m";
-    }
-    function percent(value) {
-      return Number.isFinite(value) ? value.toFixed(0) + "%" : "Unavailable";
-    }
-    function gallons(value, estimated) {
-      return Number.isFinite(value)
-        ? value.toFixed(1) + " gal" + (estimated ? " est." : "")
-        : "Unavailable";
-    }
-    function speed(value) {
-      return Number.isFinite(value) ? value.toFixed(1) + " mph" : "Unavailable";
-    }
-    function hours(value) {
-      return Number.isFinite(value) ? value.toFixed(2) + " hr" : "Unavailable";
-    }
-    function timestamp(value, timeZone) {
-      if (!value) { return "Unavailable"; }
-      return new Date(value).toLocaleString([], {
-        timeZone: timeZone,
-        month: "short", day: "numeric", year: "numeric",
-        hour: "numeric", minute: "2-digit", second: "2-digit"
-      });
-    }
-    function windowLabel(window) {
-      return timestamp(window.startUtc, window.timezone) + " - "
-        + timestamp(window.endUtc, window.timezone);
     }
     function selectedWindow() {
       return {
@@ -85,12 +241,23 @@
       byId("siq-report-live-timezone").textContent = context && context.facility
         ? context.facility.timezone : "Unavailable";
     }
+    function setActionsEnabled(enabled) {
+      byId("siq-report-live-print").disabled = !enabled;
+      byId("siq-report-live-export-csv").disabled = !enabled;
+    }
     function clear() {
       context = null;
       byId("siq-report-live-status").textContent = "";
       byId("siq-report-live-results").hidden = true;
       byId("siq-report-live-summary").replaceChildren();
       byId("siq-report-live-table").replaceChildren();
+      byId("siq-report-print-customer").textContent = "";
+      byId("siq-report-print-facility").textContent = "";
+      byId("siq-report-print-title").textContent = "";
+      byId("siq-report-print-window").textContent = "";
+      byId("siq-report-print-timezone").textContent = "";
+      byId("siq-report-print-generated").textContent = "";
+      setActionsEnabled(false);
       setContext(null);
     }
     function metric(label, value) {
@@ -135,9 +302,7 @@
       return state;
     }
     function sortedUnits(result) {
-      return result.units.slice().sort(function (left, right) {
-        return left.displayName.localeCompare(right.displayName);
-      });
+      return orderedUnits(result);
     }
     function renderProductivity(result) {
       var summary = result.summary;
@@ -179,10 +344,7 @@
             timestamp(move.couplingTimestamp, result.window.timezone),
             timestamp(move.completionTimestamp, result.window.timezone),
             duration(move.durationMinutes),
-            move.qualifyingSpeedObservationCount + " observation"
-              + (move.qualifyingSpeedObservationCount === 1 ? "" : "s")
-              + " at/above " + move.movementSpeedThresholdMph.toFixed(1)
-              + " mph; peak " + move.peakCoupledSpeedMph.toFixed(1) + " mph"
+            movementEvidence(move)
           ]);
         });
       });
@@ -254,6 +416,12 @@
       byId("siq-report-live-status").textContent = "";
       byId("siq-report-live-title").textContent = TITLES[reportType];
       byId("siq-report-live-window-label").textContent = windowLabel(result.window);
+      byId("siq-report-print-customer").textContent = context.customer.displayName;
+      byId("siq-report-print-facility").textContent = context.facility.displayName;
+      byId("siq-report-print-title").textContent = TITLES[reportType] + " Report";
+      byId("siq-report-print-window").textContent = windowLabel(result.window);
+      byId("siq-report-print-timezone").textContent =
+        "Facility timezone: " + result.window.timezone;
       var content;
       if (reportType === "moves") {
         content = renderMoves(result);
@@ -266,6 +434,7 @@
       }
       byId("siq-report-live-table").replaceChildren(content);
       byId("siq-report-live-results").hidden = false;
+      setActionsEnabled(true);
     }
     function setActiveReport(reportType) {
       document.querySelectorAll("[data-live-report]").forEach(function (button) {
@@ -283,6 +452,12 @@
       byId("siq-report-live-refresh").addEventListener("click", function () {
         controller.refresh();
       });
+      byId("siq-report-live-print").addEventListener("click", function () {
+        controller.printReport();
+      });
+      byId("siq-report-live-export-csv").addEventListener("click", function () {
+        controller.exportCsv();
+      });
       document.querySelectorAll("[data-live-report]").forEach(function (button) {
         button.addEventListener("click", function () {
           controller.selectReport(button.getAttribute("data-live-report"));
@@ -297,6 +472,61 @@
       setActiveReport: setActiveReport,
       setContext: setContext,
       setSelection: setSelection,
+      printReport: function (result, nextContext, reportType) {
+        if (printing || !windowObject || typeof windowObject.print !== "function") {
+          return false;
+        }
+        printing = true;
+        byId("siq-report-print-customer").textContent = nextContext.customer.displayName;
+        byId("siq-report-print-facility").textContent = nextContext.facility.displayName;
+        byId("siq-report-print-title").textContent = TITLES[reportType] + " Report";
+        byId("siq-report-print-window").textContent = windowLabel(result.window);
+        byId("siq-report-print-timezone").textContent =
+          "Facility timezone: " + result.window.timezone;
+        byId("siq-report-print-generated").textContent = "Generated: "
+          + timestamp(Date.now(), result.window.timezone)
+          + " (" + result.window.timezone + ")";
+        try {
+          windowObject.print();
+          return true;
+        } finally {
+          printing = false;
+        }
+      },
+      exportCsv: function (result, nextContext, reportType) {
+        if (exporting || !windowObject || !windowObject.URL
+          || typeof windowObject.URL.createObjectURL !== "function"
+          || typeof windowObject.Blob !== "function") {
+          return false;
+        }
+        exporting = true;
+        var objectUrl = null;
+        try {
+          var blob = new windowObject.Blob([
+            "\uFEFF", csvDocument(result, nextContext, reportType)
+          ], { type: "text/csv;charset=utf-8" });
+          objectUrl = windowObject.URL.createObjectURL(blob);
+          var link = document.createElement("a");
+          link.href = objectUrl;
+          link.download = reportFilename(result, nextContext, reportType);
+          link.hidden = true;
+          byId("siq-module-reports").appendChild(link);
+          link.click();
+          link.remove();
+          return true;
+        } finally {
+          if (objectUrl) {
+            if (typeof windowObject.setTimeout === "function") {
+              windowObject.setTimeout(function () {
+                windowObject.URL.revokeObjectURL(objectUrl);
+              }, 1000);
+            } else {
+              windowObject.URL.revokeObjectURL(objectUrl);
+            }
+          }
+          exporting = false;
+        }
+      },
       showError: function (message) {
         byId("siq-report-live-status").textContent = message;
       },
@@ -308,6 +538,10 @@
 
   return {
     TITLES: TITLES,
-    createReportsDomView: createReportsDomView
+    csvDocument: csvDocument,
+    csvEscape: csvEscape,
+    createReportsDomView: createReportsDomView,
+    reportData: reportData,
+    reportFilename: reportFilename
   };
 }));

@@ -108,6 +108,18 @@
       refresh: function () {
         return load(null, true);
       },
+      printReport: function () {
+        if (!lastResult || !context) {
+          return false;
+        }
+        return view.printReport(lastResult, context, selectedReport);
+      },
+      exportCsv: function () {
+        if (!lastResult || !context) {
+          return false;
+        }
+        return view.exportCsv(lastResult, context, selectedReport);
+      },
       selectReport: function (reportType) {
         if (REPORT_TYPES.indexOf(reportType) === -1) {
           return;
