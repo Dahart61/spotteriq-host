@@ -215,7 +215,7 @@
   }
 
   function deviceStatusInfoCall(deviceId, diagnosticIds) {
-    var search = { id: deviceId };
+    var search = { deviceSearch: { id: deviceId } };
     if (diagnosticIds && diagnosticIds.length) {
       search.diagnostics = diagnosticIds.slice(0, 200).map(function (id) {
         return { id: id };
