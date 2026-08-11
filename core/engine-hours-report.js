@@ -218,7 +218,9 @@
       rawSeconds: latest.rawSeconds,
       hours: latest.hours,
       source: "CARRIED_FORWARD",
-      provenance: "CARRIED_FORWARD_NO_ENGINE_OPERATION",
+      provenance: evidence.shutdownBoundaryQualified
+        ? "CARRIED_FORWARD_FINAL_SHUTDOWN"
+        : "CARRIED_FORWARD_NO_ENGINE_OPERATION",
       storedReading: latest,
       evidence: evidence
     };

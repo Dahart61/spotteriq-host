@@ -81,6 +81,9 @@
         ? "Review required" : "Unable to establish";
     }
     if (row.end.source === "CARRIED_FORWARD") {
+      if (row.end.provenance === "CARRIED_FORWARD_FINAL_SHUTDOWN") {
+        return "Carried forward from final shutdown while parked";
+      }
       return "Carried forward while parked";
     }
     return row.end.source === "STORED" ? "Recorded" : "Boundary reading";

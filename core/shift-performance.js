@@ -21,6 +21,9 @@
   var MOVING_MPH = 2;
   var ENGINE_RUNNING_RPM = 400;
   var PARKED_COMMUNICATION_MAX_GAP_HOURS = 25;
+  var SHUTDOWN_BOUNDARY_MAX_MINUTES = 10;
+  var SHUTDOWN_ASYNC_MAX_SECONDS = 60;
+  var SHUTDOWN_RUNNING_TRANSITION_MAX_MINUTES = 2;
 
   function resolveWindow(selection, nowMs, timeZone) {
     var custom = selection && selection.custom || {};
@@ -85,6 +88,77 @@
     return typeof value === "string" && value.trim() ? value : null;
   }
 
+  function canAssociateStoredMeterWithFinalShutdown(rpm, ignition, startMs) {
+    var envelopeMs = SHUTDOWN_BOUNDARY_MAX_MINUTES * 60 * 1000;
+    var asyncMs = SHUTDOWN_ASYNC_MAX_SECONDS * 1000;
+    var runningTransitionMs = SHUTDOWN_RUNNING_TRANSITION_MAX_MINUTES
+      * 60 * 1000;
+    var initialRpm = rpm.points[0];
+    var initialIgnition = ignition.points[0];
+    var requiresShutdown = initialRpm.value >= ENGINE_RUNNING_RPM
+      || initialIgnition.value === true;
+    if (!requiresShutdown) {
+      return { qualified: false, reasonCode: null };
+    }
+
+    var rpmZero = initialRpm.value === 0 ? initialRpm
+      : rpm.points.find(function (point) {
+        return point.time > startMs && point.value === 0;
+      });
+    var ignitionOff = initialIgnition.value === false ? initialIgnition
+      : ignition.points.find(function (point) {
+        return point.time > startMs && point.value === false;
+      });
+    if (!rpmZero || !ignitionOff
+      || rpmZero.time - startMs > envelopeMs
+      || ignitionOff.time - startMs > envelopeMs) {
+      return { qualified: false, reasonCode: "ENGINE_OPERATION_OBSERVED" };
+    }
+
+    var laterRunning = rpm.points.some(function (point) {
+      return point.time > rpmZero.time && point.value >= ENGINE_RUNNING_RPM;
+    });
+    var laterIgnitionOn = ignition.points.some(function (point) {
+      return point.time > ignitionOff.time && point.value === true;
+    });
+    if (laterRunning || laterIgnitionOn) {
+      return { qualified: false, reasonCode: "ENGINE_OPERATION_OBSERVED" };
+    }
+
+    var transition = rpm.points.filter(function (point) {
+      return point.time >= startMs && point.time <= rpmZero.time;
+    });
+    var nonIncreasing = transition.every(function (point, index) {
+      return index === 0 || point.value <= transition[index - 1].value;
+    });
+    var zeroLagMs = rpmZero.time - startMs;
+    var firstSubthreshold = transition.find(function (point) {
+      return point.time > startMs && point.value < ENGINE_RUNNING_RPM;
+    });
+    var explicitCoastdown = transition.some(function (point) {
+      return point.time > startMs && point.value > 0
+        && point.value < ENGINE_RUNNING_RPM;
+    });
+    var promptIgnitionOff = ignitionOff.time - startMs <= asyncMs;
+    // The outer envelope only bounds one proven shutdown. Longer sequences
+    // must show prompt sub-threshold coastdown rather than unobserved runtime.
+    var continuous = nonIncreasing && (
+      initialRpm.value < ENGINE_RUNNING_RPM
+      || zeroLagMs <= asyncMs
+      || (firstSubthreshold
+        && firstSubthreshold.time - startMs <= runningTransitionMs
+        && (explicitCoastdown || promptIgnitionOff))
+    );
+    if (!continuous) {
+      return { qualified: false, reasonCode: "ENGINE_OPERATION_OBSERVED" };
+    }
+    return {
+      qualified: true,
+      reasonCode: null,
+      completedAt: new Date(Math.max(rpmZero.time, ignitionOff.time)).toISOString()
+    };
+  }
+
   function zeroEngineOperationEvidence(
     rpmRecords,
     ignitionRecords,
@@ -98,6 +172,7 @@
       return {
         trustworthy: false,
         zeroOperation: false,
+        shutdownBoundaryQualified: false,
         reasonCode: reasonCode,
         contradictory: contradictory === true,
         startUtc: startUtc,
@@ -132,7 +207,13 @@
         }
         grouped.set(time, value);
       }
-      return { ok: true, values: Array.from(grouped.values()) };
+      return {
+        ok: true,
+        points: Array.from(grouped.entries()).map(function (entry) {
+          return { time: entry[0], value: entry[1] };
+        }),
+        values: Array.from(grouped.values())
+      };
     }
     var rpm = observations(rpmRecords, function (record) {
       var raw = valueOf(record, "data", "Data");
@@ -170,11 +251,18 @@
     var operationObserved = rpm.values.some(function (value) {
       return value >= ENGINE_RUNNING_RPM;
     }) || ignition.values.some(function (value) { return value === true; });
+    var shutdown = canAssociateStoredMeterWithFinalShutdown(
+      rpm, ignition, startMs
+    );
+    var zeroOperation = !operationObserved || shutdown.qualified;
     return {
       trustworthy: true,
-      zeroOperation: !operationObserved,
-      reasonCode: operationObserved ? "ENGINE_OPERATION_OBSERVED" : null,
+      zeroOperation: zeroOperation,
+      reasonCode: zeroOperation ? null
+        : shutdown.reasonCode || "ENGINE_OPERATION_OBSERVED",
       contradictory: false,
+      shutdownBoundaryQualified: shutdown.qualified,
+      shutdownCompletedAt: shutdown.completedAt || null,
       startUtc: startUtc,
       endUtc: endUtc,
       communication: {
