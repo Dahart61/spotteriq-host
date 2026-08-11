@@ -261,7 +261,8 @@
             Number.isFinite(row.hoursUsed) ? hoursOne(row.hoursUsed) : "Unavailable — review",
             Number.isFinite(row.engineRunningMinutes)
               ? duration(row.engineRunningMinutes) : "Unavailable",
-            row.adjustment.count
+            row.adjustment.trustworthy === false ? "Unavailable — review"
+              : row.adjustment.count
               ? "Detected (" + row.adjustment.count + ") — review"
               : "None detected"
           ];
@@ -684,7 +685,8 @@
         metric("Total Units", String(summary.totalUnits)),
         metric("Valid Hours Total", hoursOne(summary.validHoursTotal)),
         metric("Reporting Units", String(summary.reportingUnits)),
-        metric("Adjustments Detected", String(summary.adjustmentCount))
+        metric("Adjustments Detected", summary.adjustmentCount === null
+          ? "Unavailable" : String(summary.adjustmentCount))
       ];
       if (summary.reviewUnits) {
         metrics.push(metric("Review Needed", String(summary.reviewUnits)));
@@ -709,7 +711,8 @@
           Number.isFinite(row.hoursUsed) ? hoursOne(row.hoursUsed) : "Unavailable — review",
           Number.isFinite(row.engineRunningMinutes)
             ? duration(row.engineRunningMinutes) : "Unavailable",
-          row.adjustment.count
+          row.adjustment.trustworthy === false ? "Unavailable — review"
+            : row.adjustment.count
             ? "Detected (" + row.adjustment.count + ") — review"
             : "None detected"
         ];
@@ -734,8 +737,11 @@
             ["Review Reason", row.reason]
           ]),
           detailGroup("Adjustment Review", [
-            ["Stored Records Detected", String(row.adjustment.count)],
-            ["Interpretation", "Detection only; no adjustment amount is inferred."]
+            ["Stored Records Detected", row.adjustment.trustworthy === false
+              ? "Unavailable" : String(row.adjustment.count)],
+            ["Interpretation", row.adjustment.trustworthy === false
+              ? "Adjustment diagnostic unavailable; no conclusion is shown."
+              : "Detection only; no adjustment amount is inferred."]
           ])
         );
         if (row.adjustment.records.length) {

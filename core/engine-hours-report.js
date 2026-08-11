@@ -83,7 +83,15 @@
     };
   }
 
-  function adjustmentEvidence(records, window) {
+  function adjustmentEvidence(records, window, trustworthy) {
+    if (trustworthy === false) {
+      return {
+        trustworthy: false,
+        count: null,
+        semantics: "UNAVAILABLE",
+        records: []
+      };
+    }
     var start = Date.parse(window.startUtc);
     var end = Date.parse(window.endUtc);
     var stored = sorted(records).filter(function (record) {
@@ -91,6 +99,7 @@
       return instant >= start && instant <= end && Boolean(recordId(record));
     });
     return {
+      trustworthy: true,
       count: stored.length,
       semantics: "DETECTION_ONLY",
       records: stored.map(function (record) {
@@ -112,7 +121,11 @@
   function unitReport(device, data, operatingUnit, window) {
     var begin = exactBoundary(data && data.engineHours, window.startUtc);
     var end = exactBoundary(data && data.engineHours, window.endUtc);
-    var adjustment = adjustmentEvidence(data && data.engineHoursAdjustment, window);
+    var adjustment = adjustmentEvidence(
+      data && data.engineHoursAdjustment,
+      window,
+      data && data.engineHoursAdjustmentTrustworthy
+    );
     var reasonCode = !begin.ok ? begin.reasonCode : !end.ok ? end.reasonCode : null;
     if (!reasonCode && end.rawSeconds < begin.rawSeconds) {
       reasonCode = "COUNTER_DECREASED";
@@ -161,9 +174,11 @@
         validHoursTotal: valid.length ? valid.reduce(function (total, row) {
           return total + row.hoursUsed;
         }, 0) : null,
-        adjustmentCount: rows.reduce(function (total, row) {
-          return total + row.adjustment.count;
-        }, 0),
+        adjustmentCount: rows.every(function (row) {
+          return row.adjustment.trustworthy;
+        }) ? rows.reduce(function (total, row) {
+            return total + row.adjustment.count;
+          }, 0) : null,
         reviewUnits: rows.length - valid.length
       }
     };

@@ -152,28 +152,57 @@
 
   async function fetchShift(api, devices, window) {
     var specs = querySpecs(devices, window);
-    var batches = await client.safeMultiCall(api, specs.map(function (spec) {
+    var requiredSpecs = specs.filter(function (spec) {
+      return spec.source !== "engineHoursAdjustment";
+    });
+    var adjustmentSpecs = specs.filter(function (spec) {
+      return spec.source === "engineHoursAdjustment";
+    });
+    var batches = await client.safeMultiCall(api, requiredSpecs.map(function (spec) {
       return spec.call;
     }));
     var complete = await Promise.all(batches.map(function (batch, index) {
       return fetchComplete(
         api,
-        specs[index].call,
+        requiredSpecs[index].call,
         window.startUtc,
         window.endUtc,
         batch || [],
         0
       );
     }));
+    var adjustmentComplete = adjustmentSpecs.map(function () { return []; });
+    var adjustmentTrustworthy = adjustmentSpecs.length > 0;
+    try {
+      var adjustmentBatches = await client.multiCall(api, adjustmentSpecs.map(function (spec) {
+        return spec.call;
+      }));
+      adjustmentComplete = await Promise.all(adjustmentBatches.map(function (batch, index) {
+        return fetchComplete(
+          api,
+          adjustmentSpecs[index].call,
+          window.startUtc,
+          window.endUtc,
+          batch || [],
+          0
+        );
+      }));
+    } catch (error) {
+      adjustmentTrustworthy = false;
+    }
     var byDevice = new Map((devices || []).map(function (device) {
       return [device.deviceId, {
         rpm: [], ignition: [], fuel: [], engineHours: [], engineHoursAdjustment: [],
+        engineHoursAdjustmentTrustworthy: adjustmentTrustworthy,
         fifthWheel: [],
         speed: [], driverEvents: []
       }];
     }));
-    specs.forEach(function (spec, index) {
+    requiredSpecs.forEach(function (spec, index) {
       byDevice.get(spec.deviceId)[spec.source] = dedupe(complete[index]);
+    });
+    adjustmentSpecs.forEach(function (spec, index) {
+      byDevice.get(spec.deviceId)[spec.source] = dedupe(adjustmentComplete[index]);
     });
 
     var driverResult;
