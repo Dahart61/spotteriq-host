@@ -50,7 +50,7 @@
   }
 
   function hoursOne(value) {
-    return Number.isFinite(value) ? value.toFixed(1) + " hr" : "Unavailable";
+    return Number.isFinite(value) ? value.toFixed(1) + " h" : "Unavailable";
   }
 
   function miles(value) {
@@ -64,6 +64,52 @@
       month: "short", day: "numeric", year: "numeric",
       hour: "numeric", minute: "2-digit", second: "2-digit"
     });
+  }
+
+  function meterTimestamp(value, timeZone) {
+    if (!value) { return "Unavailable"; }
+    return new Date(value).toLocaleString([], {
+      timeZone: timeZone,
+      month: "short", day: "numeric", year: "numeric",
+      hour: "numeric", minute: "2-digit"
+    });
+  }
+
+  function meterStatus(row) {
+    if (!row || !row.end) {
+      return row && row.status === "REVIEW_REQUIRED"
+        ? "Review required" : "Unable to establish";
+    }
+    if (row.end.source === "CARRIED_FORWARD") {
+      return "Carried forward while parked";
+    }
+    return row.end.source === "STORED" ? "Recorded" : "Boundary reading";
+  }
+
+  function adjustmentStatus(row) {
+    if (!row || row.adjustment.trustworthy === false) {
+      return "Adjustment status unavailable";
+    }
+    return row.adjustment.count ? "Adjustment detected" : "No adjustment detected";
+  }
+
+  function meterUnavailableNote(row) {
+    if (!row || row.status === "REVIEW_REQUIRED") {
+      return "Review required before this meter can be reported.";
+    }
+    if (row.reasonCode === "COMMUNICATION_EVIDENCE_MISSING") {
+      return "Later device communication was not available for this period.";
+    }
+    if (row.reasonCode === "COMMUNICATION_COVERAGE_INCOMPLETE") {
+      return "Parked-device communication contains an extended gap.";
+    }
+    if (row.reasonCode === "ENGINE_STATE_COVERAGE_INCOMPLETE") {
+      return "The engine-off state could not be established at the last recorded meter.";
+    }
+    if (row.reasonCode === "ENGINE_OPERATION_OBSERVED") {
+      return "Later engine operation was observed.";
+    }
+    return "Complete meter and parked-device history was not available.";
   }
 
   function windowLabel(window) {
@@ -252,19 +298,23 @@
     if (reportType === "engineHours") {
       var engine = reports.engineHours;
       return {
-        headers: ["Unit", "Begin", "End", "Hours Used", "Engine Running", "Adjustment"],
+        headers: [
+          "Unit", "Beginning Meter Hours", "Beginning Meter Time",
+          "Ending Meter Hours", "Ending Meter Time", "Hours Used",
+          "Engine Running", "Meter Adjustment", "Meter Status"
+        ],
         rows: engine.rows.map(function (row) {
           return [
             row.displayName,
-            row.begin ? hoursOne(row.begin.hours) : "Unavailable — review",
-            row.end ? hoursOne(row.end.hours) : "Unable to establish ending meter",
-            Number.isFinite(row.hoursUsed) ? hoursOne(row.hoursUsed) : "Unavailable — review",
+            row.begin ? hoursOne(row.begin.hours) : "Unavailable",
+            row.begin ? meterTimestamp(row.begin.timestamp, timeZone) : "",
+            row.end ? hoursOne(row.end.hours) : "Unable to establish",
+            row.end ? meterTimestamp(row.end.recordedAt || row.end.timestamp, timeZone) : "",
+            Number.isFinite(row.hoursUsed) ? hoursOne(row.hoursUsed) : "Unavailable",
             Number.isFinite(row.engineRunningMinutes)
               ? duration(row.engineRunningMinutes) : "Unavailable",
-            row.adjustment.trustworthy === false ? "Unavailable — review"
-              : row.adjustment.count
-              ? "Detected (" + row.adjustment.count + ") — review"
-              : "None detected"
+            adjustmentStatus(row),
+            meterStatus(row)
           ];
         })
       };
@@ -463,6 +513,27 @@
       });
       group.appendChild(grid);
       return group;
+    }
+    function meterDetailItem(label, value, note) {
+      var item = element("div", "siq-engine-meter-item");
+      item.append(
+        element("span", "siq-engine-meter-label", label),
+        element("strong", "siq-engine-meter-value", value)
+      );
+      if (note) {
+        item.appendChild(element("p", "siq-engine-meter-note", note));
+      }
+      return item;
+    }
+    function meterDetailSection(label, items) {
+      var section = element("section", "siq-engine-meter-section");
+      section.appendChild(element("h4", "", label));
+      var grid = element("div", "siq-engine-meter-grid");
+      items.forEach(function (item) {
+        grid.appendChild(meterDetailItem(item.label, item.value, item.note));
+      });
+      section.appendChild(grid);
+      return section;
     }
     function expandable(records, headers, rowValues, details) {
       var wrapper = element("div", "siq-live-report-table-scroll");
@@ -674,25 +745,21 @@
         return content;
       });
     }
-    function boundarySource(boundary) {
-      if (boundary && boundary.source === "CARRIED_FORWARD") {
-        return "Last recorded meter carried forward; no subsequent engine operation was observed through the report end.";
-      }
-      return boundary && boundary.source === "STORED"
-        ? "Stored telemetry" : "Interpolated boundary";
-    }
     function renderEngineHours(result, reports) {
       var engine = reports.engineHours;
       var summary = engine.summary;
       var metrics = [
         metric("Total Units", String(summary.totalUnits)),
-        metric("Valid Hours Total", hoursOne(summary.validHoursTotal)),
-        metric("Reporting Units", String(summary.reportingUnits)),
-        metric("Adjustments Detected", summary.adjustmentCount === null
-          ? "Unavailable" : String(summary.adjustmentCount))
+        metric("Total Hours Used", hoursOne(summary.validHoursTotal)),
+        metric("Units Reported", String(summary.reportingUnits)),
+        metric("Meter Adjustments", summary.adjustmentCount === null
+          ? "Not available" : String(summary.adjustmentCount))
       ];
       if (summary.reviewUnits) {
-        metrics.push(metric("Review Needed", String(summary.reviewUnits)));
+        metrics.push(metric("Units Requiring Review", String(summary.reviewUnits)));
+      }
+      if (summary.unavailableUnits) {
+        metrics.push(metric("Units Not Reported", String(summary.unavailableUnits)));
       }
       byId("siq-report-live-summary").replaceChildren.apply(
         byId("siq-report-live-summary"), metrics
@@ -709,54 +776,51 @@
       return expandable(engine.rows, headers, function (row) {
         return [
           row.displayName,
-          row.begin ? hoursOne(row.begin.hours) : "Unavailable — review",
-          row.end ? hoursOne(row.end.hours) : "Unable to establish ending meter",
-          Number.isFinite(row.hoursUsed) ? hoursOne(row.hoursUsed) : "Unavailable — review",
+          row.begin ? hoursOne(row.begin.hours) : "Unavailable",
+          row.end ? hoursOne(row.end.hours)
+            : row.status === "REVIEW_REQUIRED" ? "Review required" : "Unable to establish",
+          Number.isFinite(row.hoursUsed) ? hoursOne(row.hoursUsed) : "Unavailable",
           Number.isFinite(row.engineRunningMinutes)
             ? duration(row.engineRunningMinutes) : "Unavailable",
-          row.adjustment.trustworthy === false ? "Unavailable — review"
-            : row.adjustment.count
-            ? "Detected (" + row.adjustment.count + ") — review"
-            : "None detected"
+          row.adjustment.trustworthy === false ? "Not available"
+            : row.adjustment.count ? "Detected" : "None"
         ];
       }, function (row) {
-        var content = element("div", "siq-report-detail-sections");
-        content.append(
-          detailGroup("Boundary Evidence", [
-            ["Exact Start", timestamp(result.window.startUtc, result.window.timezone)],
-            ["Begin Raw Seconds", row.begin ? String(row.begin.rawSeconds) : "Unavailable"],
-            ["Begin Hours", row.begin ? hoursOne(row.begin.hours) : "Unavailable"],
-            ["Begin Source", row.begin ? boundarySource(row.begin) : "Unavailable"],
-            ["Exact End", timestamp(result.window.endUtc, result.window.timezone)],
-            ["End Raw Seconds", row.end ? String(row.end.rawSeconds) : "Unavailable"],
-            ["End Hours", row.end ? hoursOne(row.end.hours) : "Unavailable"],
-            ["End Source", row.end ? boundarySource(row.end) : "Unavailable"],
-            ["Last Meter Recorded", row.end && row.end.recordedAt
-              ? timestamp(row.end.recordedAt, result.window.timezone) : "Not applicable"]
-          ]),
-          detailGroup("Reported Usage", [
-            ["Hours Used", Number.isFinite(row.hoursUsed)
-              ? hoursOne(row.hoursUsed) : "Unavailable — review"],
-            ["Engine Running Context", Number.isFinite(row.engineRunningMinutes)
-              ? duration(row.engineRunningMinutes) : "Unavailable"],
-            ["Review Reason", row.reason]
-          ]),
-          detailGroup("Adjustment Review", [
-            ["Stored Records Detected", row.adjustment.trustworthy === false
-              ? "Unavailable" : String(row.adjustment.count)],
-            ["Interpretation", row.adjustment.trustworthy === false
-              ? "Adjustment diagnostic unavailable; no conclusion is shown."
-              : "Detection only; no adjustment amount is inferred."]
-          ])
-        );
-        if (row.adjustment.records.length) {
-          content.appendChild(element("h4", "siq-report-detail-table-title",
-            "Adjustment Records"));
-          content.appendChild(table([{ label: "Timestamp" }, { label: "Source" }],
-            row.adjustment.records.map(function (record) {
-              return [timestamp(record.timestamp, result.window.timezone), "Stored telemetry"];
-            })));
+        var content = element("div", "siq-engine-meter-details");
+        var endNote = null;
+        if (row.end && row.end.source === "CARRIED_FORWARD") {
+          endNote = meterTimestamp(row.end.recordedAt, result.window.timezone)
+            + " · Last recorded meter carried forward through the report end; "
+            + "no subsequent engine operation was observed.";
+        } else if (row.end) {
+          endNote = meterTimestamp(row.end.timestamp, result.window.timezone)
+            + " · " + meterStatus(row) + ".";
+        } else {
+          endNote = meterUnavailableNote(row);
         }
+        var adjustmentNote = row.adjustment.records.length
+          ? row.adjustment.records.map(function (record) {
+              return meterTimestamp(record.timestamp, result.window.timezone);
+            }).join(", ") : null;
+        content.append(
+          meterDetailSection("Meter detail", [
+            { label: "Reporting Period", value:
+              meterTimestamp(result.window.startUtc, result.window.timezone) + " – "
+                + meterTimestamp(result.window.endUtc, result.window.timezone) },
+            { label: "Beginning Meter", value: row.begin
+              ? hoursOne(row.begin.hours) : "Unavailable", note: row.begin
+              ? meterTimestamp(row.begin.timestamp, result.window.timezone) : null },
+            { label: "Ending Meter", value: row.end
+              ? hoursOne(row.end.hours) : meterStatus(row), note: endNote },
+            { label: "Hours Used", value: Number.isFinite(row.hoursUsed)
+              ? hoursOne(row.hoursUsed) : "Unavailable" },
+            { label: "Engine Running", value: Number.isFinite(row.engineRunningMinutes)
+              ? duration(row.engineRunningMinutes) : "Unavailable" }
+          ]),
+          meterDetailSection("Meter adjustment", [{
+            label: "Status", value: adjustmentStatus(row), note: adjustmentNote
+          }])
+        );
         return content;
       });
     }
@@ -937,6 +1001,10 @@
     csvDocument: csvDocument,
     csvEscape: csvEscape,
     createReportsDomView: createReportsDomView,
+    duration: duration,
+    meterStatus: meterStatus,
+    meterUnavailableNote: meterUnavailableNote,
+    meterTimestamp: meterTimestamp,
     reportData: reportData,
     reportFilename: reportFilename
   };

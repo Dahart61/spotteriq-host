@@ -20,6 +20,7 @@
   var LITERS_TO_GALLONS = 0.264172;
   var MOVING_MPH = 2;
   var ENGINE_RUNNING_RPM = 400;
+  var PARKED_COMMUNICATION_MAX_GAP_HOURS = 25;
 
   function resolveWindow(selection, nowMs, timeZone) {
     var custom = selection && selection.custom || {};
@@ -79,7 +80,18 @@
     return null;
   }
 
-  function zeroEngineOperationEvidence(rpmRecords, ignitionRecords, startUtc, endUtc) {
+  function recordId(record) {
+    var value = valueOf(record, "id", "Id");
+    return typeof value === "string" && value.trim() ? value : null;
+  }
+
+  function zeroEngineOperationEvidence(
+    rpmRecords,
+    ignitionRecords,
+    communicationRecords,
+    startUtc,
+    endUtc
+  ) {
     var startMs = Date.parse(startUtc);
     var endMs = Date.parse(endUtc);
     function fail(reasonCode, contradictory) {
@@ -100,8 +112,7 @@
         var time = recordTime(record);
         return time >= startMs && time <= endMs;
       });
-      if (!source.length || recordTime(source[0]) !== startMs
-        || recordTime(source[source.length - 1]) !== endMs) {
+      if (!source.length || recordTime(source[0]) !== startMs) {
         return { ok: false, reasonCode: "ENGINE_STATE_COVERAGE_INCOMPLETE" };
       }
       var grouped = new Map();
@@ -140,6 +151,22 @@
     if (!ignition.ok) {
       return fail(ignition.reasonCode, ignition.contradictory);
     }
+    var communication = sorted(communicationRecords).filter(function (record) {
+      var time = recordTime(record);
+      return Boolean(recordId(record)) && time > startMs && time <= endMs;
+    });
+    if (endMs > startMs && !communication.length) {
+      return fail("COMMUNICATION_EVIDENCE_MISSING");
+    }
+    var communicationPoints = [startMs].concat(communication.map(recordTime));
+    communicationPoints.push(endMs);
+    var maximumGapMs = PARKED_COMMUNICATION_MAX_GAP_HOURS * 60 * 60 * 1000;
+    var excessiveGap = communicationPoints.some(function (time, index) {
+      return index > 0 && time - communicationPoints[index - 1] > maximumGapMs;
+    });
+    if (excessiveGap) {
+      return fail("COMMUNICATION_COVERAGE_INCOMPLETE");
+    }
     var operationObserved = rpm.values.some(function (value) {
       return value >= ENGINE_RUNNING_RPM;
     }) || ignition.values.some(function (value) { return value === true; });
@@ -149,7 +176,15 @@
       reasonCode: operationObserved ? "ENGINE_OPERATION_OBSERVED" : null,
       contradictory: false,
       startUtc: startUtc,
-      endUtc: endUtc
+      endUtc: endUtc,
+      communication: {
+        source: "LOG_RECORD",
+        maximumGapHours: PARKED_COMMUNICATION_MAX_GAP_HOURS,
+        observationCount: communication.length,
+        lastObservedAt: communication.length
+          ? new Date(recordTime(communication[communication.length - 1])).toISOString()
+          : new Date(startMs).toISOString()
+      }
     };
   }
 
@@ -451,6 +486,7 @@
     KPH_TO_MPH: KPH_TO_MPH,
     LITERS_TO_GALLONS: LITERS_TO_GALLONS,
     MOVING_MPH: MOVING_MPH,
+    PARKED_COMMUNICATION_MAX_GAP_HOURS: PARKED_COMMUNICATION_MAX_GAP_HOURS,
     analyzeUnit: analyzeUnit,
     countVerifiedMoves: countVerifiedMoves,
     cumulativeDelta: cumulativeDelta,

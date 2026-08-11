@@ -274,12 +274,14 @@
     evidenced.forEach(function (device) {
       var record = byDevice.get(device.deviceId).engineHoursCarryForward.latestStoredMeter;
       var startUtc = new Date(Date.parse(rawValue(record, "dateTime", "DateTime"))).toISOString();
-      ["rpm", "ignition"].forEach(function (source) {
+      ["rpm", "ignition", "communication"].forEach(function (source) {
         stateSpecs.push({
           deviceId: device.deviceId,
           source: source,
           startUtc: startUtc,
-          call: statusDataCall(device.deviceId, DIAGNOSTICS[source], startUtc, window.endUtc)
+          call: source === "communication"
+            ? logRecordCall(device.deviceId, startUtc, window.endUtc)
+            : statusDataCall(device.deviceId, DIAGNOSTICS[source], startUtc, window.endUtc)
         });
       });
     });
@@ -304,9 +306,13 @@
         });
         var rpm = specs.find(function (entry) { return entry.spec.source === "rpm"; });
         var ignition = specs.find(function (entry) { return entry.spec.source === "ignition"; });
+        var communication = specs.find(function (entry) {
+          return entry.spec.source === "communication";
+        });
         var carry = byDevice.get(device.deviceId).engineHoursCarryForward;
         carry.operationEvidence = shiftPerformance.zeroEngineOperationEvidence(
           rpm ? rpm.records : [], ignition ? ignition.records : [],
+          communication ? communication.records : [],
           rpm ? rpm.spec.startUtc : null, window.endUtc
         );
       });

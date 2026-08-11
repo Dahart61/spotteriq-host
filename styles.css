@@ -4004,6 +4004,59 @@
   text-align: right;
 }
 
+.siq-engine-meter-details {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  margin-top: 12px;
+}
+
+.siq-engine-meter-section {
+  padding-top: 10px;
+  border-top: 1px solid var(--siq-line);
+}
+
+.siq-engine-meter-section h4 {
+  margin: 0 0 10px;
+  color: var(--siq-muted);
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.siq-engine-meter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 14px 22px;
+}
+
+.siq-engine-meter-item {
+  min-width: 0;
+}
+
+.siq-engine-meter-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--siq-muted);
+  font-size: 10px;
+}
+
+.siq-engine-meter-value {
+  display: block;
+  color: var(--siq-text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.siq-engine-meter-note {
+  max-width: 48ch;
+  margin: 5px 0 0;
+  color: var(--siq-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 .siq-report-operating-context {
   margin-top: 12px;
   padding: 14px;
@@ -4040,6 +4093,10 @@
   .siq-live-report-actions {
     justify-content: flex-start;
   }
+
+  .siq-engine-meter-grid {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+  }
 }
 
 @media (max-width: 680px) {
@@ -4062,7 +4119,8 @@
   }
 
   .siq-report-detail-grid,
-  .siq-report-context-grid {
+  .siq-report-context-grid,
+  .siq-engine-meter-grid {
     grid-template-columns: 1fr;
   }
 }

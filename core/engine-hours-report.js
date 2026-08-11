@@ -160,9 +160,21 @@
     ENGINE_STATE_COVERAGE_INCOMPLETE: "Unable to establish the ending meter because complete engine-state evidence was not available.",
     ENGINE_STATE_EVIDENCE_MALFORMED: "Unable to establish the ending meter because engine-state evidence was invalid.",
     ENGINE_STATE_EVIDENCE_CONFLICT: "Unable to establish the ending meter because engine-state evidence conflicted.",
+    COMMUNICATION_EVIDENCE_MISSING: "Unable to establish the ending meter because later device communication was not observed.",
+    COMMUNICATION_COVERAGE_INCOMPLETE: "Unable to establish the ending meter because parked-device communication had an excessive gap.",
     METER_ADJUSTMENT_AMBIGUITY: "Unable to establish the ending meter because a later meter adjustment was detected.",
     METER_HISTORY_AMBIGUITY: "Unable to establish the ending meter because the stored meter history was ambiguous."
   });
+
+  var REVIEW_REASONS = Object.freeze([
+    "BOUNDARY_MALFORMED",
+    "BOUNDARY_CONFLICT",
+    "COUNTER_DECREASED",
+    "ENGINE_STATE_EVIDENCE_MALFORMED",
+    "ENGINE_STATE_EVIDENCE_CONFLICT",
+    "METER_ADJUSTMENT_AMBIGUITY",
+    "METER_HISTORY_AMBIGUITY"
+  ]);
 
   function carriedEnd(begin, data, adjustment, window) {
     var latest = latestStoredReading(data, window.endUtc);
@@ -207,7 +219,8 @@
       hours: latest.hours,
       source: "CARRIED_FORWARD",
       provenance: "CARRIED_FORWARD_NO_ENGINE_OPERATION",
-      storedReading: latest
+      storedReading: latest,
+      evidence: evidence
     };
   }
 
@@ -230,7 +243,8 @@
     return {
       deviceId: device.deviceId,
       displayName: device.displayName,
-      status: reasonCode ? "REVIEW" : "AVAILABLE",
+      status: !reasonCode ? "AVAILABLE"
+        : REVIEW_REASONS.indexOf(reasonCode) !== -1 ? "REVIEW_REQUIRED" : "UNAVAILABLE",
       reasonCode: reasonCode,
       reason: reasonCode ? REASONS[reasonCode] : null,
       begin: begin.ok ? begin : null,
@@ -260,6 +274,8 @@
       return left.displayName.localeCompare(right.displayName);
     });
     var valid = rows.filter(function (row) { return Number.isFinite(row.hoursUsed); });
+    var unavailable = rows.filter(function (row) { return row.status === "UNAVAILABLE"; });
+    var review = rows.filter(function (row) { return row.status === "REVIEW_REQUIRED"; });
     return {
       definitionVersion: 1,
       diagnosticId: "DiagnosticEngineHoursId",
@@ -277,7 +293,8 @@
         }) ? rows.reduce(function (total, row) {
             return total + row.adjustment.count;
           }, 0) : null,
-        reviewUnits: rows.length - valid.length
+        unavailableUnits: unavailable.length,
+        reviewUnits: review.length
       }
     };
   }
