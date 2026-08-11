@@ -23,6 +23,7 @@
   "use strict";
 
   var RESULT_LIMIT = 50000;
+  var ADJUSTMENT_TIMEOUT_MS = 8000;
   var DIAGNOSTICS = Object.freeze({
     rpm: "DiagnosticEngineSpeedId",
     ignition: "DiagnosticIgnitionId",
@@ -95,6 +96,23 @@
     return copy;
   }
 
+  function withTimeout(promise, timeoutMs) {
+    return new Promise(function (resolve, reject) {
+      var timer = setTimeout(function () {
+        var error = new Error("Optional engine-hours adjustment query timed out");
+        error.code = "ENGINE_HOURS_ADJUSTMENT_TIMEOUT";
+        reject(error);
+      }, timeoutMs);
+      promise.then(function (value) {
+        clearTimeout(timer);
+        resolve(value);
+      }, function (error) {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+  }
+
   async function fetchComplete(api, call, startUtc, endUtc, initialBatch, depth) {
     var batch = Array.isArray(initialBatch)
       ? initialBatch : await client.call(api, call[0], call[1]);
@@ -150,7 +168,11 @@
     return specs;
   }
 
-  async function fetchShift(api, devices, window) {
+  async function fetchShift(api, devices, window, options) {
+    var adjustmentTimeoutMs = options
+      && Number.isFinite(options.adjustmentTimeoutMs)
+      && options.adjustmentTimeoutMs > 0
+      ? options.adjustmentTimeoutMs : ADJUSTMENT_TIMEOUT_MS;
     var specs = querySpecs(devices, window);
     var requiredSpecs = specs.filter(function (spec) {
       return spec.source !== "engineHoursAdjustment";
@@ -174,9 +196,12 @@
     var adjustmentComplete = adjustmentSpecs.map(function () { return []; });
     var adjustmentTrustworthy = adjustmentSpecs.length > 0;
     try {
-      var adjustmentBatches = await client.multiCall(api, adjustmentSpecs.map(function (spec) {
-        return spec.call;
-      }));
+      var adjustmentBatches = await withTimeout(
+        client.multiCall(api, adjustmentSpecs.map(function (spec) {
+          return spec.call;
+        })),
+        adjustmentTimeoutMs
+      );
       adjustmentComplete = await Promise.all(adjustmentBatches.map(function (batch, index) {
         return fetchComplete(
           api,
@@ -248,6 +273,7 @@
   }
 
   return {
+    ADJUSTMENT_TIMEOUT_MS: ADJUSTMENT_TIMEOUT_MS,
     DIAGNOSTICS: DIAGNOSTICS,
     RESULT_LIMIT: RESULT_LIMIT,
     dedupe: dedupe,
@@ -255,6 +281,7 @@
     fetchShift: fetchShift,
     logRecordCall: logRecordCall,
     querySpecs: querySpecs,
-    statusDataCall: statusDataCall
+    statusDataCall: statusDataCall,
+    withTimeout: withTimeout
   };
 }));
