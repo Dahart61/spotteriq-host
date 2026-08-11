@@ -79,6 +79,80 @@
     return null;
   }
 
+  function zeroEngineOperationEvidence(rpmRecords, ignitionRecords, startUtc, endUtc) {
+    var startMs = Date.parse(startUtc);
+    var endMs = Date.parse(endUtc);
+    function fail(reasonCode, contradictory) {
+      return {
+        trustworthy: false,
+        zeroOperation: false,
+        reasonCode: reasonCode,
+        contradictory: contradictory === true,
+        startUtc: startUtc,
+        endUtc: endUtc
+      };
+    }
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+      return fail("ENGINE_STATE_INTERVAL_INVALID");
+    }
+    function observations(records, transform) {
+      var source = sorted(records).filter(function (record) {
+        var time = recordTime(record);
+        return time >= startMs && time <= endMs;
+      });
+      if (!source.length || recordTime(source[0]) !== startMs
+        || recordTime(source[source.length - 1]) !== endMs) {
+        return { ok: false, reasonCode: "ENGINE_STATE_COVERAGE_INCOMPLETE" };
+      }
+      var grouped = new Map();
+      for (var index = 0; index < source.length; index += 1) {
+        var time = recordTime(source[index]);
+        var value = transform(source[index]);
+        if (value === null || value === undefined
+          || (typeof value === "number" && !Number.isFinite(value))) {
+          return { ok: false, reasonCode: "ENGINE_STATE_EVIDENCE_MALFORMED" };
+        }
+        if (grouped.has(time) && grouped.get(time) !== value) {
+          return {
+            ok: false,
+            reasonCode: "ENGINE_STATE_EVIDENCE_CONFLICT",
+            contradictory: true
+          };
+        }
+        grouped.set(time, value);
+      }
+      return { ok: true, values: Array.from(grouped.values()) };
+    }
+    var rpm = observations(rpmRecords, function (record) {
+      var raw = valueOf(record, "data", "Data");
+      if (raw === null || raw === "" || typeof raw === "boolean") {
+        return null;
+      }
+      var value = Number(raw);
+      return Number.isFinite(value) && value >= 0 ? value : null;
+    });
+    if (!rpm.ok) {
+      return fail(rpm.reasonCode, rpm.contradictory);
+    }
+    var ignition = observations(ignitionRecords, function (record) {
+      return booleanLevel(valueOf(record, "data", "Data"));
+    });
+    if (!ignition.ok) {
+      return fail(ignition.reasonCode, ignition.contradictory);
+    }
+    var operationObserved = rpm.values.some(function (value) {
+      return value >= ENGINE_RUNNING_RPM;
+    }) || ignition.values.some(function (value) { return value === true; });
+    return {
+      trustworthy: true,
+      zeroOperation: !operationObserved,
+      reasonCode: operationObserved ? "ENGINE_OPERATION_OBSERVED" : null,
+      contradictory: false,
+      startUtc: startUtc,
+      endUtc: endUtc
+    };
+  }
+
   function speedMph(record) {
     var raw = Number(valueOf(record, "speed", "Speed"));
     if (!Number.isFinite(raw)) {
@@ -381,6 +455,7 @@
     countVerifiedMoves: countVerifiedMoves,
     cumulativeDelta: cumulativeDelta,
     facilitySummary: facilitySummary,
+    zeroEngineOperationEvidence: zeroEngineOperationEvidence,
     verifiedMoveRecords: verifiedMoveRecords,
     resolveWindow: resolveWindow
   };

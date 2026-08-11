@@ -257,7 +257,7 @@
           return [
             row.displayName,
             row.begin ? hoursOne(row.begin.hours) : "Unavailable — review",
-            row.end ? hoursOne(row.end.hours) : "Unavailable — review",
+            row.end ? hoursOne(row.end.hours) : "Unable to establish ending meter",
             Number.isFinite(row.hoursUsed) ? hoursOne(row.hoursUsed) : "Unavailable — review",
             Number.isFinite(row.engineRunningMinutes)
               ? duration(row.engineRunningMinutes) : "Unavailable",
@@ -675,6 +675,9 @@
       });
     }
     function boundarySource(boundary) {
+      if (boundary && boundary.source === "CARRIED_FORWARD") {
+        return "Last recorded meter carried forward; no subsequent engine operation was observed through the report end.";
+      }
       return boundary && boundary.source === "STORED"
         ? "Stored telemetry" : "Interpolated boundary";
     }
@@ -707,7 +710,7 @@
         return [
           row.displayName,
           row.begin ? hoursOne(row.begin.hours) : "Unavailable — review",
-          row.end ? hoursOne(row.end.hours) : "Unavailable — review",
+          row.end ? hoursOne(row.end.hours) : "Unable to establish ending meter",
           Number.isFinite(row.hoursUsed) ? hoursOne(row.hoursUsed) : "Unavailable — review",
           Number.isFinite(row.engineRunningMinutes)
             ? duration(row.engineRunningMinutes) : "Unavailable",
@@ -727,7 +730,9 @@
             ["Exact End", timestamp(result.window.endUtc, result.window.timezone)],
             ["End Raw Seconds", row.end ? String(row.end.rawSeconds) : "Unavailable"],
             ["End Hours", row.end ? hoursOne(row.end.hours) : "Unavailable"],
-            ["End Source", row.end ? boundarySource(row.end) : "Unavailable"]
+            ["End Source", row.end ? boundarySource(row.end) : "Unavailable"],
+            ["Last Meter Recorded", row.end && row.end.recordedAt
+              ? timestamp(row.end.recordedAt, result.window.timezone) : "Not applicable"]
           ]),
           detailGroup("Reported Usage", [
             ["Hours Used", Number.isFinite(row.hoursUsed)

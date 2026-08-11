@@ -50,6 +50,22 @@
     }];
   }
 
+  function latestStoredEngineHoursCall(deviceId, endUtc) {
+    return ["Get", {
+      typeName: "StatusData",
+      search: {
+        deviceSearch: { id: deviceId },
+        diagnosticSearch: { id: DIAGNOSTICS.engineHours },
+        toDate: endUtc
+      },
+      resultsLimit: 100,
+      sort: {
+        sortBy: "date",
+        sortDirection: "desc"
+      }
+    }];
+  }
+
   function logRecordCall(deviceId, startUtc, endUtc) {
     return ["Get", {
       typeName: "LogRecord",
@@ -86,6 +102,14 @@
     return Array.from(byKey.values()).sort(function (left, right) {
       return Date.parse(rawValue(left, "dateTime", "DateTime"))
         - Date.parse(rawValue(right, "dateTime", "DateTime"));
+    });
+  }
+
+  function authorizedRecords(records, deviceId) {
+    return (records || []).filter(function (record) {
+      var device = rawValue(record, "device", "Device");
+      var recordDeviceId = device && rawValue(device, "id", "Id");
+      return !recordDeviceId || recordDeviceId === deviceId;
     });
   }
 
@@ -168,6 +192,153 @@
     return specs;
   }
 
+  function exactValid(records, exactUtc) {
+    var expected = Date.parse(exactUtc);
+    var matches = (records || []).filter(function (record) {
+      return Date.parse(rawValue(record, "dateTime", "DateTime")) === expected;
+    });
+    if (!matches.length) {
+      return false;
+    }
+    var values = matches.map(function (record) {
+      var raw = rawValue(record, "data", "Data");
+      return raw === null || raw === "" || typeof raw === "boolean" ? NaN : Number(raw);
+    });
+    return values.every(function (value) {
+      return Number.isFinite(value) && value >= 0 && value === values[0];
+    });
+  }
+
+  function latestStored(records, endUtc) {
+    var end = Date.parse(endUtc);
+    return (records || []).filter(function (record) {
+      var id = rawValue(record, "id", "Id");
+      var time = Date.parse(rawValue(record, "dateTime", "DateTime"));
+      var raw = rawValue(record, "data", "Data");
+      var value = raw === null || raw === "" || typeof raw === "boolean" ? NaN : Number(raw);
+      return typeof id === "string" && id.trim() && Number.isFinite(time)
+        && time <= end && Number.isFinite(value) && value >= 0;
+    }).sort(function (left, right) {
+      return Date.parse(rawValue(right, "dateTime", "DateTime"))
+        - Date.parse(rawValue(left, "dateTime", "DateTime"));
+    })[0] || null;
+  }
+
+  async function hydrateEngineHoursCarryForward(api, devices, byDevice, window) {
+    var candidates = (devices || []).filter(function (device) {
+      var records = byDevice.get(device.deviceId).engineHours;
+      return exactValid(records, window.startUtc) && !exactValid(records, window.endUtc);
+    });
+    var missingLatest = candidates.filter(function (device) {
+      return !latestStored(byDevice.get(device.deviceId).engineHours, window.endUtc);
+    });
+    if (missingLatest.length) {
+      try {
+        var latestBatches = await client.safeMultiCall(api, missingLatest.map(function (device) {
+          return latestStoredEngineHoursCall(device.deviceId, window.endUtc);
+        }));
+        missingLatest.forEach(function (device, index) {
+          var record = latestStored(
+            authorizedRecords(latestBatches[index], device.deviceId), window.endUtc
+          );
+          if (record) {
+            byDevice.get(device.deviceId).engineHoursCarryForward = {
+              latestStoredMeter: record,
+              operationEvidence: null
+            };
+          }
+        });
+      } catch (error) {
+        // Carry-forward is optional and must fail closed without suppressing the report.
+      }
+    }
+    candidates.forEach(function (device) {
+      var data = byDevice.get(device.deviceId);
+      if (!data.engineHoursCarryForward) {
+        var record = latestStored(data.engineHours, window.endUtc);
+        if (record) {
+          data.engineHoursCarryForward = {
+            latestStoredMeter: record,
+            operationEvidence: null
+          };
+        }
+      }
+    });
+    var evidenced = candidates.filter(function (device) {
+      return Boolean(byDevice.get(device.deviceId).engineHoursCarryForward);
+    });
+    if (!evidenced.length) {
+      return;
+    }
+    var stateSpecs = [];
+    evidenced.forEach(function (device) {
+      var record = byDevice.get(device.deviceId).engineHoursCarryForward.latestStoredMeter;
+      var startUtc = new Date(Date.parse(rawValue(record, "dateTime", "DateTime"))).toISOString();
+      ["rpm", "ignition"].forEach(function (source) {
+        stateSpecs.push({
+          deviceId: device.deviceId,
+          source: source,
+          startUtc: startUtc,
+          call: statusDataCall(device.deviceId, DIAGNOSTICS[source], startUtc, window.endUtc)
+        });
+      });
+    });
+    try {
+      var stateBatches = await client.safeMultiCall(api, stateSpecs.map(function (spec) {
+        return spec.call;
+      }));
+      var complete = await Promise.all(stateBatches.map(function (batch, index) {
+        return fetchComplete(
+          api, stateSpecs[index].call, stateSpecs[index].startUtc,
+          window.endUtc, batch || [], 0
+        );
+      }));
+      evidenced.forEach(function (device) {
+        var specs = stateSpecs.map(function (spec, index) {
+          return {
+            spec: spec,
+            records: authorizedRecords(complete[index], spec.deviceId)
+          };
+        }).filter(function (entry) {
+          return entry.spec.deviceId === device.deviceId;
+        });
+        var rpm = specs.find(function (entry) { return entry.spec.source === "rpm"; });
+        var ignition = specs.find(function (entry) { return entry.spec.source === "ignition"; });
+        var carry = byDevice.get(device.deviceId).engineHoursCarryForward;
+        carry.operationEvidence = shiftPerformance.zeroEngineOperationEvidence(
+          rpm ? rpm.records : [], ignition ? ignition.records : [],
+          rpm ? rpm.spec.startUtc : null, window.endUtc
+        );
+      });
+    } catch (error) {
+      // Missing or incomplete evidence leaves carry-forward unavailable.
+    }
+    try {
+      var adjustmentCalls = evidenced.map(function (device) {
+        var record = byDevice.get(device.deviceId).engineHoursCarryForward.latestStoredMeter;
+        var startUtc = new Date(Date.parse(rawValue(record, "dateTime", "DateTime"))).toISOString();
+        return statusDataCall(
+          device.deviceId, DIAGNOSTICS.engineHoursAdjustment, startUtc, window.endUtc
+        );
+      });
+      var adjustmentBatches = await withTimeout(
+        client.multiCall(api, adjustmentCalls), ADJUSTMENT_TIMEOUT_MS
+      );
+      evidenced.forEach(function (device, index) {
+        var data = byDevice.get(device.deviceId);
+        data.engineHoursAdjustment = dedupe(
+          data.engineHoursAdjustment.concat(
+            authorizedRecords(adjustmentBatches[index], device.deviceId)
+          )
+        );
+      });
+    } catch (error) {
+      evidenced.forEach(function (device) {
+        byDevice.get(device.deviceId).engineHoursAdjustmentTrustworthy = false;
+      });
+    }
+  }
+
   async function fetchShift(api, devices, window, options) {
     var adjustmentTimeoutMs = options
       && Number.isFinite(options.adjustmentTimeoutMs)
@@ -224,11 +395,17 @@
       }];
     }));
     requiredSpecs.forEach(function (spec, index) {
-      byDevice.get(spec.deviceId)[spec.source] = dedupe(complete[index]);
+      byDevice.get(spec.deviceId)[spec.source] = dedupe(
+        authorizedRecords(complete[index], spec.deviceId)
+      );
     });
     adjustmentSpecs.forEach(function (spec, index) {
-      byDevice.get(spec.deviceId)[spec.source] = dedupe(adjustmentComplete[index]);
+      byDevice.get(spec.deviceId)[spec.source] = dedupe(
+        authorizedRecords(adjustmentComplete[index], spec.deviceId)
+      );
     });
+
+    await hydrateEngineHoursCarryForward(api, devices, byDevice, window);
 
     var driverResult;
     try {
@@ -276,9 +453,12 @@
     ADJUSTMENT_TIMEOUT_MS: ADJUSTMENT_TIMEOUT_MS,
     DIAGNOSTICS: DIAGNOSTICS,
     RESULT_LIMIT: RESULT_LIMIT,
+    authorizedRecords: authorizedRecords,
     dedupe: dedupe,
     fetchComplete: fetchComplete,
     fetchShift: fetchShift,
+    hydrateEngineHoursCarryForward: hydrateEngineHoursCarryForward,
+    latestStoredEngineHoursCall: latestStoredEngineHoursCall,
     logRecordCall: logRecordCall,
     querySpecs: querySpecs,
     statusDataCall: statusDataCall,

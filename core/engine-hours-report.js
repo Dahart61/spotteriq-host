@@ -79,8 +79,47 @@
       timestamp: new Date(expected).toISOString(),
       rawSeconds: values[0],
       hours: secondsToHours(values[0]),
-      source: stored ? "STORED" : "INTERPOLATED"
+      source: stored ? "STORED" : "INTERPOLATED",
+      provenance: "NATIVE_BOUNDARY"
     };
+  }
+
+  function latestStoredReading(data, endUtc) {
+    var end = Date.parse(endUtc);
+    var supplemental = data && data.engineHoursCarryForward
+      && data.engineHoursCarryForward.latestStoredMeter;
+    var candidates = (data && data.engineHours || []).concat(
+      supplemental ? [supplemental] : []
+    ).filter(function (record) {
+      var time = recordTime(record);
+      return Boolean(recordId(record)) && Number.isFinite(time) && time <= end
+        && secondsToHours(recordData(record)) !== null;
+    }).sort(function (left, right) {
+      return recordTime(right) - recordTime(left);
+    });
+    if (!candidates.length) {
+      return null;
+    }
+    return {
+      timestamp: new Date(recordTime(candidates[0])).toISOString(),
+      rawSeconds: recordData(candidates[0]),
+      hours: secondsToHours(recordData(candidates[0])),
+      source: "STORED",
+      provenance: "STORED_READING"
+    };
+  }
+
+  function meterHistoryAmbiguous(records, beginUtc, endUtc) {
+    var start = Date.parse(beginUtc);
+    var end = Date.parse(endUtc);
+    var values = sorted(records).filter(function (record) {
+      var time = recordTime(record);
+      return Boolean(recordId(record)) && time >= start && time <= end
+        && secondsToHours(recordData(record)) !== null;
+    }).map(recordData);
+    return values.some(function (value, index) {
+      return index > 0 && value < values[index - 1];
+    });
   }
 
   function adjustmentEvidence(records, window, trustworthy) {
@@ -115,8 +154,62 @@
     BOUNDARY_MISSING: "An exact native boundary value was not returned.",
     BOUNDARY_MALFORMED: "An exact native boundary value was malformed.",
     BOUNDARY_CONFLICT: "Conflicting native values were returned at one boundary.",
-    COUNTER_DECREASED: "The native engine-hours counter decreased in this window."
+    COUNTER_DECREASED: "The native engine-hours counter decreased in this window.",
+    ENDING_METER_NOT_ESTABLISHED: "Unable to establish the ending meter.",
+    ENGINE_OPERATION_OBSERVED: "Unable to establish the ending meter because later engine operation was observed.",
+    ENGINE_STATE_COVERAGE_INCOMPLETE: "Unable to establish the ending meter because complete engine-state evidence was not available.",
+    ENGINE_STATE_EVIDENCE_MALFORMED: "Unable to establish the ending meter because engine-state evidence was invalid.",
+    ENGINE_STATE_EVIDENCE_CONFLICT: "Unable to establish the ending meter because engine-state evidence conflicted.",
+    METER_ADJUSTMENT_AMBIGUITY: "Unable to establish the ending meter because a later meter adjustment was detected.",
+    METER_HISTORY_AMBIGUITY: "Unable to establish the ending meter because the stored meter history was ambiguous."
   });
+
+  function carriedEnd(begin, data, adjustment, window) {
+    var latest = latestStoredReading(data, window.endUtc);
+    if (!latest) {
+      return { ok: false, reasonCode: "ENDING_METER_NOT_ESTABLISHED" };
+    }
+    var evidence = data && data.engineHoursCarryForward
+      && data.engineHoursCarryForward.operationEvidence;
+    if (!evidence || evidence.startUtc !== latest.timestamp
+      || evidence.endUtc !== window.endUtc) {
+      return { ok: false, reasonCode: "ENGINE_STATE_COVERAGE_INCOMPLETE" };
+    }
+    if (!evidence.trustworthy || evidence.contradictory) {
+      return {
+        ok: false,
+        reasonCode: evidence.reasonCode || "ENGINE_STATE_COVERAGE_INCOMPLETE"
+      };
+    }
+    if (!evidence.zeroOperation) {
+      return { ok: false, reasonCode: evidence.reasonCode || "ENGINE_OPERATION_OBSERVED" };
+    }
+    if (adjustment.trustworthy && sorted(data && data.engineHoursAdjustment).some(function (record) {
+      var time = recordTime(record);
+      return Boolean(recordId(record)) && time >= Date.parse(latest.timestamp)
+        && time <= Date.parse(window.endUtc);
+    })) {
+      return { ok: false, reasonCode: "METER_ADJUSTMENT_AMBIGUITY" };
+    }
+    if (meterHistoryAmbiguous(
+      data && data.engineHours, window.startUtc, latest.timestamp
+    )) {
+      return { ok: false, reasonCode: "METER_HISTORY_AMBIGUITY" };
+    }
+    if (latest.rawSeconds < begin.rawSeconds) {
+      return { ok: false, reasonCode: "COUNTER_DECREASED" };
+    }
+    return {
+      ok: true,
+      timestamp: window.endUtc,
+      recordedAt: latest.timestamp,
+      rawSeconds: latest.rawSeconds,
+      hours: latest.hours,
+      source: "CARRIED_FORWARD",
+      provenance: "CARRIED_FORWARD_NO_ENGINE_OPERATION",
+      storedReading: latest
+    };
+  }
 
   function unitReport(device, data, operatingUnit, window) {
     var begin = exactBoundary(data && data.engineHours, window.startUtc);
@@ -126,6 +219,9 @@
       window,
       data && data.engineHoursAdjustmentTrustworthy
     );
+    if (begin.ok && !end.ok && end.reasonCode === "BOUNDARY_MISSING") {
+      end = carriedEnd(begin, data, adjustment, window);
+    }
     var reasonCode = !begin.ok ? begin.reasonCode : !end.ok ? end.reasonCode : null;
     if (!reasonCode && end.rawSeconds < begin.rawSeconds) {
       reasonCode = "COUNTER_DECREASED";
@@ -139,6 +235,8 @@
       reason: reasonCode ? REASONS[reasonCode] : null,
       begin: begin.ok ? begin : null,
       end: end.ok ? end : null,
+      beginProvenance: begin.ok ? begin.provenance : "UNAVAILABLE",
+      endProvenance: end.ok ? end.provenance : "UNAVAILABLE",
       hoursUsed: Number.isFinite(hoursUsed) && hoursUsed >= 0 ? hoursUsed : null,
       engineRunningMinutes: operatingUnit
         && Number.isFinite(operatingUnit.engineRunningMinutes)
@@ -190,6 +288,7 @@
     build: build,
     cumulativeDeltaHours: cumulativeDeltaHours,
     exactBoundary: exactBoundary,
+    latestStoredReading: latestStoredReading,
     secondsToHours: secondsToHours,
     unitReport: unitReport
   };
