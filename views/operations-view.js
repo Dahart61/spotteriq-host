@@ -282,8 +282,12 @@
     }
 
     function updateCurrentDriver(refs, model) {
-      refs.currentDriverDisplayName.textContent =
-        model.currentDriverDisplayName || "Unassigned";
+      var assigned = Boolean(model.currentDriverDisplayName);
+      refs.currentDriverDisplayName.textContent = assigned
+        ? model.currentDriverDisplayName : "Unassigned";
+      refs.currentDriverDisplayName.classList.toggle(
+        "siq-unit-row__driver-value--unassigned", !assigned
+      );
     }
 
     function rowMatches(model) {
@@ -389,18 +393,23 @@
       refs.displayName = element("strong", "", model.displayName);
       unitLine.appendChild(refs.displayName);
       unitCell.appendChild(unitLine);
+      var currentDriverLine = element("span", "siq-unit-row__driver");
+      currentDriverLine.appendChild(
+        element("span", "siq-unit-row__driver-label", "Driver:")
+      );
+      refs.currentDriverDisplayName = element(
+        "span",
+        "siq-unit-row__driver-value",
+        ""
+      );
+      currentDriverLine.appendChild(refs.currentDriverDisplayName);
+      unitCell.appendChild(currentDriverLine);
       refs.nativeDisplayName = element(
         "span",
         "siq-unit-row__native-name",
         model.nativeDisplayName
       );
       unitCell.appendChild(refs.nativeDisplayName);
-      refs.currentDriverDisplayName = element(
-        "span",
-        "siq-unit-row__driver",
-        ""
-      );
-      unitCell.appendChild(refs.currentDriverDisplayName);
       updateIdentity(refs, model);
       updateCurrentDriver(refs, model);
       unitCell.setAttribute("role", "cell");
@@ -708,11 +717,9 @@
         detailMetric(metrics, "engineHours", "Engine Hours");
         detailMetric(metrics, "engineHoursAt", "Engine Hours Reported");
       }
-      if (model.currentDriverDisplayName) {
-        detailMetric(metrics, "currentDriverDisplayName", "Current Driver");
-        if (model.driverIdentifiedAt) {
-          detailMetric(metrics, "driverIdentifiedAt", "Driver Identified");
-        }
+      detailMetric(metrics, "currentDriverDisplayName", "Current Driver");
+      if (model.currentDriverDisplayName && model.driverIdentifiedAt) {
+        detailMetric(metrics, "driverIdentifiedAt", "Driver Identified");
       }
       if (Number.isFinite(model.odometerMiles)) {
         detailMetric(metrics, "odometerMiles", "Odometer");
@@ -785,7 +792,7 @@
       set("defLevelAt", formatTimestamp(model.defLevelAt));
       set("engineHours", formatNumber(model.engineHours, " h", 1));
       set("engineHoursAt", formatTimestamp(model.engineHoursAt));
-      set("currentDriverDisplayName", model.currentDriverDisplayName || "");
+      set("currentDriverDisplayName", model.currentDriverDisplayName || "Unassigned");
       set("driverIdentifiedAt", formatTimestamp(model.driverIdentifiedAt));
       var telemetryPresentation = operationalTelemetryPresentation(model);
       set("odometerMiles", telemetryPresentation.odometer);

@@ -697,15 +697,21 @@
     unitName.title = unit.name;
     unitCell.title = unit.name;
     unitCell.setAttribute("role", "cell");
-    var currentDriver = createEl(
+    var currentDriver = createEl("span", "siq-unit-row__driver");
+    var currentDriverValue = createEl(
       "span",
-      "siq-unit-row__driver",
+      "siq-unit-row__driver-value" + (unit.currentDriverDisplayName
+        ? "" : " siq-unit-row__driver-value--unassigned"),
       unit.currentDriverDisplayName || "Unassigned"
+    );
+    currentDriver.append(
+      createEl("span", "siq-unit-row__driver-label", "Driver:"),
+      currentDriverValue
     );
     unitCell.append(unitName, currentDriver);
     row.appendChild(unitCell);
     values.name = unitName;
-    values.currentDriverDisplayName = currentDriver;
+    values.currentDriverDisplayName = currentDriverValue;
 
     addCell("role", "siq-role-cell", unit.roleLabel || "--");
     addCell("status", "siq-status-cell", unit.statusLabel || "--");
@@ -934,9 +940,8 @@
     );
     var driver = selectors.driverPresentation(unit);
     operationsItems.push([
-      driver.status === "UNAVAILABLE"
-        ? "Driver Identification" : "Current Driver",
-      driver.current
+      "Current Driver",
+      unit.currentDriverDisplayName || "Unassigned"
     ]);
     if (driver.identifiedAt) {
       operationsItems.push(["Identified", formatTimestamp(driver.identifiedAt)]);
@@ -1057,6 +1062,12 @@
 
     var row = rowElements.get(unit.id);
     var unitValues = valueElements.get(unit.id);
+    if (unitValues && unitValues.currentDriverDisplayName) {
+      unitValues.currentDriverDisplayName.classList.toggle(
+        "siq-unit-row__driver-value--unassigned",
+        !unit.currentDriverDisplayName
+      );
+    }
     var quality = unitValues ? unitValues.quality : null;
     if (row) {
       row.className = "siq-unit-row siq-unit-row--" + presentation.stateKey;
