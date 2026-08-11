@@ -77,6 +77,7 @@
         ? event.driverDisplayName.trim() : null,
       source: event.source || null,
       sourceType: event.sourceType || null,
+      overlapSeed: event.overlapSeed === true,
       warningState: event.warningState || "NONE"
     };
   }
@@ -90,7 +91,9 @@
         return;
       }
       var instant = Date.parse(normalized.timestamp);
-      if (instant < range.start || instant >= range.end || byId.has(normalized.id)) {
+      if (instant >= range.end
+        || instant < range.start && !normalized.overlapSeed
+        || byId.has(normalized.id)) {
         return;
       }
       byId.set(normalized.id, normalized);
@@ -144,7 +147,33 @@
       warningState: "NONE"
     };
 
-    relevant.forEach(function (event) {
+    relevant.filter(function (event) {
+      return event.overlapSeed && Date.parse(event.timestamp) < range.start;
+    }).forEach(function (event) {
+      if (event.action === ACTIONS.CLEARED) {
+        state = {
+          driverId: null,
+          driverDisplayName: null,
+          identifiedAt: null,
+          sourceEventId: event.id,
+          source: event.source,
+          warningState: event.warningState
+        };
+      } else {
+        state = {
+          driverId: event.driverId,
+          driverDisplayName: event.driverDisplayName,
+          identifiedAt: event.timestamp,
+          sourceEventId: event.id,
+          source: event.source,
+          warningState: event.warningState
+        };
+      }
+    });
+
+    relevant.filter(function (event) {
+      return Date.parse(event.timestamp) >= range.start;
+    }).forEach(function (event) {
       var instant = Date.parse(event.timestamp);
       if (instant > cursor) {
         result.push(interval(cursor, instant, state));

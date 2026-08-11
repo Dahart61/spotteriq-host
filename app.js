@@ -241,10 +241,10 @@
       var tabs = productionElement("div", "siq-report-tabs");
       tabs.setAttribute("role", "tablist");
       [
-        ["productivity", "Productivity"],
-        ["moves", "Trailer Moves"],
-        ["fuel", "Fuel & Engine Use"],
-        ["speed", "Speed Activity"]
+        ["overview", "Overview"],
+        ["drivers", "Driver Productivity"],
+        ["trucks", "Truck Utilization"],
+        ["events", "Events"]
       ].forEach(function (item, index) {
         var button = productionElement(
           "button",
@@ -254,9 +254,34 @@
         button.type = "button";
         button.setAttribute("role", "tab");
         button.setAttribute("data-live-report", item[0]);
+        if (item[0] === "events") {
+          button.setAttribute("data-live-report-group", "events");
+        }
         button.setAttribute("aria-selected", String(index === 0));
         tabs.appendChild(button);
       });
+
+      var eventTabs = identify(
+        productionElement("div", "siq-report-event-tabs"),
+        "siq-report-event-tabs"
+      );
+      eventTabs.hidden = true;
+      eventTabs.setAttribute("role", "tablist");
+      [["moves", "Trailer Moves"], ["speed", "Speed Activity"]]
+        .forEach(function (item, index) {
+          var button = productionElement(
+            "button",
+            "siq-report-event-tab" + (index === 0
+              ? " siq-report-event-tab--active" : ""),
+            item[1]
+          );
+          button.type = "button";
+          button.setAttribute("role", "tab");
+          button.setAttribute("data-live-report", item[0]);
+          button.setAttribute("data-live-report-event", item[0]);
+          button.setAttribute("aria-selected", String(index === 0));
+          eventTabs.appendChild(button);
+        });
 
       var status = identify(
         productionElement("p", "siq-status-message siq-live-report-status"),
@@ -288,7 +313,7 @@
       var resultHeading = productionElement("div", "siq-summary-band__heading");
       resultHeading.append(
         productionElement("span", "siq-context-label", "Facility report"),
-        identify(productionElement("h2", "siq-section-title", "Productivity"),
+        identify(productionElement("h2", "siq-section-title", "Overview"),
           "siq-report-live-title"),
         identify(productionElement("span", "siq-summary-scope"),
           "siq-report-live-window-label")
@@ -300,7 +325,7 @@
           "siq-report-live-summary"),
         identify(productionElement("div"), "siq-report-live-table")
       );
-      module.replaceChildren(heading, form, tabs, status, results);
+      module.replaceChildren(heading, form, tabs, eventTabs, status, results);
     }
 
     function showProductionModule(moduleName) {

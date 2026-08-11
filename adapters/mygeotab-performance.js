@@ -7,7 +7,9 @@
     ? require("../core/shift-performance") : root.SIQ_SHIFT_PERFORMANCE;
   var driverEvents = typeof module === "object" && module.exports
     ? require("./mygeotab-driver-events") : root.SIQ_MYGEOTAB_DRIVER_EVENTS;
-  var api = factory(client, shiftPerformance, driverEvents);
+  var managementReports = typeof module === "object" && module.exports
+    ? require("../core/management-reports") : root.SIQ_MANAGEMENT_REPORTS;
+  var api = factory(client, shiftPerformance, driverEvents, managementReports);
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   }
@@ -15,7 +17,8 @@
 }(typeof globalThis !== "undefined" ? globalThis : this, function (
   client,
   shiftPerformance,
-  driverEvents
+  driverEvents,
+  managementReports
 ) {
   "use strict";
 
@@ -193,11 +196,13 @@
     var units = (devices || []).map(function (device) {
       return shiftPerformance.analyzeUnit(device, byDevice.get(device.deviceId), window);
     });
+    var reports = managementReports.build(devices, byDevice, units, window);
     return {
       ok: true,
       window: window,
       units: units,
       summary: shiftPerformance.facilitySummary(units, window),
+      reports: reports,
       requests: specs.map(function (spec) {
         return {
           typeName: spec.call[1].typeName,

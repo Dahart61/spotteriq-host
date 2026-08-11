@@ -12,7 +12,7 @@
   "use strict";
 
   var REPORT_TYPES = Object.freeze([
-    "productivity", "moves", "fuel", "speed"
+    "overview", "drivers", "trucks", "moves", "speed"
   ]);
 
   function createReportsController(options) {
@@ -22,7 +22,8 @@
     var generation = 0;
     var lastSelection = null;
     var lastResult = null;
-    var selectedReport = "productivity";
+    var selectedReport = "overview";
+    var selectedEventReport = "moves";
     var now = typeof options.now === "function" ? options.now : Date.now;
 
     function pad2(value) {
@@ -121,10 +122,16 @@
         return view.exportCsv(lastResult, context, selectedReport);
       },
       selectReport: function (reportType) {
+        if (reportType === "events") {
+          reportType = selectedEventReport;
+        }
         if (REPORT_TYPES.indexOf(reportType) === -1) {
           return;
         }
         selectedReport = reportType;
+        if (reportType === "moves" || reportType === "speed") {
+          selectedEventReport = reportType;
+        }
         view.setActiveReport(selectedReport);
         if (lastResult) {
           view.render(lastResult, context, selectedReport);
@@ -135,6 +142,7 @@
           generation: generation,
           lastSelection: lastSelection,
           selectedReport: selectedReport,
+          selectedEventReport: selectedEventReport,
           hasResult: Boolean(lastResult)
         };
       }

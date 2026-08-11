@@ -72,7 +72,7 @@
         deviceSearch: { id: range.deviceId },
         fromDate: range.fromDate,
         toDate: range.toDate,
-        includeOverlappedChanges: false
+        includeOverlappedChanges: true
       },
       resultsLimit: 50000,
       sort: {
@@ -134,6 +134,7 @@
       driverDisplayName: null,
       source: SOURCE,
       sourceType: sourceType,
+      overlapSeed: false,
       warningState: "NONE"
     };
   }
@@ -219,11 +220,18 @@
     batches.forEach(function (batch, index) {
       var range = ranges[index];
       var allowedDeviceIds = new Set([range.deviceId]);
+      var preceding = [];
       (batch || []).forEach(function (record) {
         var normalized = normalizeDriverChange(record, allowedDeviceIds);
         var instant = normalized && Date.parse(normalized.timestamp);
-        if (normalized
-          && Date.parse(range.fromDate) <= instant
+        if (normalized && instant < Date.parse(range.fromDate)) {
+          if (!preceding.length
+            || Date.parse(preceding[0].timestamp) < instant) {
+            preceding = [normalized];
+          } else if (Date.parse(preceding[0].timestamp) === instant) {
+            preceding.push(normalized);
+          }
+        } else if (normalized && Date.parse(range.fromDate) <= instant
           && instant < Date.parse(range.toDate)) {
           events.push(normalized);
         } else {
@@ -233,6 +241,9 @@
             rawValue(record, "id", "Id")
           ));
         }
+      });
+      preceding.forEach(function (event) {
+        events.push(Object.assign({}, event, { overlapSeed: true }));
       });
     });
     events = dedupeEvents(events);
