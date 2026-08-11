@@ -820,13 +820,7 @@
       warningMessage: null,
       engineHealth: powertrainFaults.unavailable("CAPABILITY_DISABLED"),
       affectedMetrics: []
-    }, driverProjection(
-      enrollment,
-      driverContext && driverContext.events || [],
-      driverContext && driverContext.status || "CURRENT",
-      new Date(nowMs).toISOString(),
-      range.startUtc
-    ));
+    }, currentDriverProjection(statusInfo));
   }
 
   function driverEnabled(enrollment) {
@@ -897,6 +891,20 @@
       driverIdentityWarning: identified && !current.driverDisplayName
         ? "Driver display identity unavailable" : null,
       driverTimeline: driverAttribution.timelineEntries(events, window)
+    };
+  }
+
+  function currentDriverProjection(statusInfo) {
+    var displayName = statusInfo && statusInfo.currentDriverDisplayName;
+    var identified = typeof displayName === "string" && displayName.trim();
+    return {
+      driverIdentificationEnabled: true,
+      driverIdentificationStatus: identified ? "IDENTIFIED" : "UNATTRIBUTED",
+      currentDriverDisplayName: identified ? displayName.trim() : null,
+      driverIdentifiedAt: null,
+      driverAttributionLabel: identified ? displayName.trim() : "Unassigned",
+      driverIdentityWarning: null,
+      driverTimeline: []
     };
   }
 
@@ -1081,13 +1089,7 @@
         enrollment.powertrainFaultMonitoringEnabled === true
           ? "FAULT_DATA_NOT_LOADED" : "CAPABILITY_DISABLED"
       )
-    }, driverProjection(
-      enrollment,
-      driverContext && driverContext.events || [],
-      driverContext && driverContext.status || "CURRENT",
-      new Date(nowMs).toISOString(),
-      range.startUtc
-    ));
+    }, currentDriverProjection(statusInfo));
   }
 
   function createOperationsDataSource(configuration) {
@@ -1144,22 +1146,52 @@
       return normalized;
     }
 
-    function normalizeStatuses(rawStatuses) {
+    async function normalizeStatuses(api, rawStatuses) {
       var allowed = new Set(cache.devices.map(function (device) {
         return device.deviceId;
       }));
-      (rawStatuses || []).forEach(function (raw) {
+      var normalized = (rawStatuses || []).map(function (raw) {
         var status = normalization.normalizeDeviceStatusInfo(raw, allowed);
-        if (!status) {
-          return;
+        return status;
+      }).filter(Boolean);
+      var driverIds = normalized.map(function (status) {
+        return status.currentDriverId;
+      }).filter(Boolean);
+      var identities = await client.getCurrentDriverUsers(api, driverIds);
+      var displayNames = new Map();
+      identities.forEach(function (result) {
+        var identity = normalization.normalizeCurrentDriverIdentity(
+          result.record, result.driverId
+        );
+        if (identity) {
+          displayNames.set(result.driverId, identity.displayName);
         }
+      });
+      cache.devices.forEach(function (device) {
+        var existing = cache.statusByDevice.get(device.deviceId);
+        if (existing) {
+          cache.statusByDevice.set(device.deviceId, Object.assign({}, existing, {
+            currentDriverId: null,
+            currentDriverDisplayName: null
+          }));
+        }
+      });
+      normalized.forEach(function (status) {
+        status.currentDriverDisplayName = status.currentDriverId
+          ? displayNames.get(status.currentDriverId) || null : null;
         var existing = cache.statusByDevice.get(status.deviceId);
         if (!existing || !existing.timestamp || (
           status.timestamp && Date.parse(status.timestamp) >= Date.parse(existing.timestamp)
         )) {
           cache.statusByDevice.set(status.deviceId, status);
+        } else {
+          cache.statusByDevice.set(status.deviceId, Object.assign({}, existing, {
+            currentDriverId: status.currentDriverId,
+            currentDriverDisplayName: status.currentDriverDisplayName
+          }));
         }
       });
+      return normalized;
     }
 
     function viewModels(nowMs) {
@@ -1349,15 +1381,13 @@
       cache.engineHealthByDevice = new Map();
       cache.cursors = {};
       try {
-        normalizeStatuses(currentStatuses);
+        await normalizeStatuses(context.api, currentStatuses);
       } catch (error) {
         var normalizationError = new Error("Current state normalization failed");
         normalizationError.code = "CURRENT_STATE_NORMALIZATION_FAILED";
         normalizationError.cause = error;
         throw normalizationError;
       }
-      await loadDriverEvents(context.api, initialDriverRequests(range.endUtc));
-
       try {
         return {
           ok: true,
@@ -1467,8 +1497,7 @@
       var results = await Promise.all(promises);
       normalizeAndMerge(results[0]);
       if (includeStatus) {
-        normalizeStatuses(results[1]);
-        await loadDriverEvents(context.api, refreshDriverRequests(toDate));
+        await normalizeStatuses(context.api, results[1]);
       }
       return {
         ok: true,
@@ -1494,12 +1523,8 @@
         error.code = "EMPTY_CURRENT_STATE_RESPONSE";
         throw error;
       }
-      normalizeStatuses(rawStatuses);
+      await normalizeStatuses(context.api, rawStatuses);
       cache.range.endUtc = new Date(nowMs).toISOString();
-      await loadDriverEvents(
-        context.api,
-        refreshDriverRequests(cache.range.endUtc)
-      );
       return {
         ok: true,
         scopeKey: cache.scopeKey,
@@ -1601,6 +1626,7 @@
     currentShiftRange: currentShiftRange,
     trailerPresentation: trailerPresentation,
     driverEnabled: driverEnabled,
+    currentDriverProjection: currentDriverProjection,
     driverProjection: driverProjection,
     driverWindow: driverWindow,
     engineRunningValue: engineRunningValue,

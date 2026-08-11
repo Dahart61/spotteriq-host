@@ -281,6 +281,11 @@
       refs.unitCell.title = identityTitle(model);
     }
 
+    function updateCurrentDriver(refs, model) {
+      refs.currentDriverDisplayName.textContent =
+        model.currentDriverDisplayName || "Unassigned";
+    }
+
     function rowMatches(model) {
       if (activeFilter === "moving") {
         return model.operationalState === "MOVING";
@@ -348,8 +353,6 @@
         model.defLevelPercent, "%", 0
       );
       refs.engineHours.textContent = formatNumber(model.engineHours, " h", 1);
-      refs.currentDriverDisplayName.textContent = model.currentDriverDisplayName || "";
-      refs.driverMetric.hidden = !model.currentDriverDisplayName;
       var health = model.engineHealth;
       var activeFaults = health && health.status === "AVAILABLE"
         ? (health.activeEngineFaults || 0) + (health.activeTransmissionFaults || 0)
@@ -392,7 +395,14 @@
         model.nativeDisplayName
       );
       unitCell.appendChild(refs.nativeDisplayName);
+      refs.currentDriverDisplayName = element(
+        "span",
+        "siq-unit-row__driver",
+        ""
+      );
+      unitCell.appendChild(refs.currentDriverDisplayName);
       updateIdentity(refs, model);
+      updateCurrentDriver(refs, model);
       unitCell.setAttribute("role", "cell");
       row.appendChild(unitCell);
 
@@ -441,10 +451,7 @@
         secondaryMetric(refs, "fuelLevelPercent", "Fuel"),
         secondaryMetric(refs, "defLevelPercent", "DEF"),
         secondaryMetric(refs, "engineHours", "Engine Hours"),
-        refs.faultIndicator = element("span", "siq-fault-indicator"),
-        refs.driverMetric = secondaryMetric(
-          refs, "currentDriverDisplayName", "Driver"
-        )
+        refs.faultIndicator = element("span", "siq-fault-indicator")
       );
       row.appendChild(secondary);
       updateSecondaryMetrics(refs, model);
@@ -461,6 +468,7 @@
       refs.row.setAttribute(
         "aria-label",
         model.displayName + ", " + model.operationalStateLabel
+          + ", driver " + (model.currentDriverDisplayName || "Unassigned")
           + (model.operationalStateQualifierLabel
             ? ", " + model.operationalStateQualifierLabel : "")
           + (model.warningMessage ? ", " + model.warningMessage : "")
@@ -489,6 +497,9 @@
       } else if (field === "engineHealth") {
         updateSecondaryMetrics(refs, model);
         flash(refs.faultIndicator);
+      } else if (field === "currentDriverDisplayName") {
+        updateCurrentDriver(refs, model);
+        flash(refs.currentDriverDisplayName);
       } else if (field === "lastCommunicationAt"
         || field === "communicationCondition"
         || field === "communicationConditionLabel") {
@@ -499,7 +510,7 @@
         flash(target);
       } else if (["fuelLevelPercent", "fuelLevelAt", "defLevelPercent",
         "defLevelAt", "engineHours", "engineHoursAt",
-        "currentDriverDisplayName", "driverIdentifiedAt"].indexOf(field) !== -1) {
+        "driverIdentifiedAt"].indexOf(field) !== -1) {
         updateSecondaryMetrics(refs, model);
         flash(refs[field] || refs.currentDriverDisplayName);
       } else if (field === "warningMessage") {
@@ -699,7 +710,9 @@
       }
       if (model.currentDriverDisplayName) {
         detailMetric(metrics, "currentDriverDisplayName", "Current Driver");
-        detailMetric(metrics, "driverIdentifiedAt", "Driver Identified");
+        if (model.driverIdentifiedAt) {
+          detailMetric(metrics, "driverIdentifiedAt", "Driver Identified");
+        }
       }
       if (Number.isFinite(model.odometerMiles)) {
         detailMetric(metrics, "odometerMiles", "Odometer");

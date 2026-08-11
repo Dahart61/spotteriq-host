@@ -682,6 +682,7 @@
     row.setAttribute("data-device-id", unit.id);
     row.setAttribute("aria-selected", "false");
     row.setAttribute("aria-label", unit.name + ", " + presentation.state
+      + ", driver " + (unit.currentDriverDisplayName || "Unassigned")
       + (unit.quality ? ", " + unit.quality : ""));
 
     function addCell(key, className, value) {
@@ -696,9 +697,15 @@
     unitName.title = unit.name;
     unitCell.title = unit.name;
     unitCell.setAttribute("role", "cell");
-    unitCell.appendChild(unitName);
+    var currentDriver = createEl(
+      "span",
+      "siq-unit-row__driver",
+      unit.currentDriverDisplayName || "Unassigned"
+    );
+    unitCell.append(unitName, currentDriver);
     row.appendChild(unitCell);
     values.name = unitName;
+    values.currentDriverDisplayName = currentDriver;
 
     addCell("role", "siq-role-cell", unit.roleLabel || "--");
     addCell("status", "siq-status-cell", unit.statusLabel || "--");
@@ -1040,6 +1047,12 @@
     setValue(unit.id, "levels", formatLevels(unit), changedKeys.levels);
     setValue(unit.id, "engineHours", unit.engineHours + " h", changedKeys.engineHours);
     setValue(unit.id, "freshness", unit.freshness, changedKeys.freshness);
+    setValue(
+      unit.id,
+      "currentDriverDisplayName",
+      unit.currentDriverDisplayName || "Unassigned",
+      changedKeys.currentDriverDisplayName
+    );
     setValue(unit.id, "quality", unit.quality, changedKeys.quality);
 
     var row = rowElements.get(unit.id);
@@ -1048,6 +1061,7 @@
     if (row) {
       row.className = "siq-unit-row siq-unit-row--" + presentation.stateKey;
       row.setAttribute("aria-label", unit.name + ", " + presentation.state
+        + ", driver " + (unit.currentDriverDisplayName || "Unassigned")
         + (unit.quality ? ", " + unit.quality : ""));
       if (quality) {
         quality.className = qualityClass(unit);

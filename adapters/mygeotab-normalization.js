@@ -29,7 +29,35 @@
     if (typeof value === "string") {
       return value;
     }
-    return value && typeof value.id === "string" ? value.id : null;
+    return value && typeof (value.id || value.Id) === "string"
+      ? (value.id || value.Id) : null;
+  }
+
+  function currentDriverId(value) {
+    var id = referenceId(value);
+    if (typeof id !== "string" || !id.trim()
+      || /^UnknownDriver(?:Id)?$/i.test(id.trim())) {
+      return null;
+    }
+    return id.trim();
+  }
+
+  function normalizeCurrentDriverIdentity(record, expectedId) {
+    var id = referenceId(record && (record.id || record.Id));
+    var isDriver = record && Object.prototype.hasOwnProperty.call(record, "isDriver")
+      ? record.isDriver : record && record.IsDriver;
+    var firstName = record && Object.prototype.hasOwnProperty.call(record, "firstName")
+      ? record.firstName : record && record.FirstName;
+    var lastName = record && Object.prototype.hasOwnProperty.call(record, "lastName")
+      ? record.lastName : record && record.LastName;
+    if (!expectedId || id !== expectedId || isDriver !== true
+      || typeof firstName !== "string" || !firstName.trim()
+      || typeof lastName !== "string" || !lastName.trim()) {
+      return null;
+    }
+    return {
+      displayName: firstName.trim() + " " + lastName.trim()
+    };
   }
 
   function finiteNumber(value) {
@@ -292,6 +320,8 @@
     var currentStateDuration = Object.prototype.hasOwnProperty.call(
       record, "currentStateDuration"
     ) ? record.currentStateDuration : record.CurrentStateDuration;
+    var driver = Object.prototype.hasOwnProperty.call(record, "driver")
+      ? record.driver : record.Driver;
     return {
       deviceId: deviceId,
       timestamp: timestamp,
@@ -299,6 +329,8 @@
       isCommunicating: typeof communicating === "boolean" ? communicating : null,
       isDriving: typeof driving === "boolean" ? driving : null,
       currentStateDurationMs: durationMilliseconds(currentStateDuration),
+      currentDriverId: currentDriverId(driver),
+      currentDriverDisplayName: null,
       latestDiagnostics: latestStatusData(record),
       location: latitude !== null && longitude !== null ? {
         latitude: latitude,
@@ -356,6 +388,7 @@
     exactIso: exactIso,
     mappingsForEnrollment: mappingsForEnrollment,
     normalizeChannelValue: normalizeChannelValue,
+    normalizeCurrentDriverIdentity: normalizeCurrentDriverIdentity,
     normalizeDevice: normalizeDevice,
     normalizeDeviceStatusInfo: normalizeDeviceStatusInfo,
     durationMilliseconds: durationMilliseconds,

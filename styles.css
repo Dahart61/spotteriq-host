@@ -929,6 +929,16 @@
   white-space: nowrap;
 }
 
+.siq-unit-row__driver {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--siq-muted);
+  font-size: 11px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .siq-role-cell,
 .siq-status-cell {
   line-height: 1.25;

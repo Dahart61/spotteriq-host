@@ -210,9 +210,9 @@
     if (status === "UNATTRIBUTED") {
       return {
         status: status,
-        current: "Unattributed",
+        current: "Unassigned",
         identifiedAt: null,
-        label: "Unattributed"
+        label: "Unassigned"
       };
     }
     if (status === "UNVERIFIED") {

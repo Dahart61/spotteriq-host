@@ -214,29 +214,82 @@
     }, []);
   }
 
-  async function getDeviceStatusInfo(api, deviceIds, diagnosticIds) {
-    if (!Array.isArray(deviceIds) || !deviceIds.length) {
-      return [];
-    }
-    var search = {
-      deviceSearch: { deviceIds: deviceIds }
-    };
+  function deviceStatusInfoCall(deviceId, diagnosticIds) {
+    var search = { id: deviceId };
     if (diagnosticIds && diagnosticIds.length) {
       search.diagnostics = diagnosticIds.slice(0, 200).map(function (id) {
         return { id: id };
       });
     }
-    return call(api, "Get", {
+    return ["Get", {
       typeName: "DeviceStatusInfo",
       search: search,
       resultsLimit: 5000
+    }];
+  }
+
+  async function getDeviceStatusInfo(api, deviceIds, diagnosticIds) {
+    var uniqueDeviceIds = Array.from(new Set(
+      (Array.isArray(deviceIds) ? deviceIds : []).filter(function (id) {
+        return typeof id === "string" && id.trim();
+      })
+    ));
+    if (!uniqueDeviceIds.length) {
+      return [];
+    }
+    var batches = await safeMultiCall(api, uniqueDeviceIds.map(function (deviceId) {
+      return deviceStatusInfoCall(deviceId, diagnosticIds);
+    }));
+    return batches.reduce(function (all, batch) {
+      return all.concat(batch || []);
+    }, []);
+  }
+
+  function currentDriverUserCall(driverId) {
+    return ["Get", {
+      typeName: "User",
+      search: { id: driverId },
+      propertySelector: {
+        fields: ["id", "firstName", "lastName", "isDriver"],
+        isIncluded: true
+      },
+      resultsLimit: 1
+    }];
+  }
+
+  async function getCurrentDriverUsers(api, driverIds) {
+    var uniqueDriverIds = Array.from(new Set(
+      (Array.isArray(driverIds) ? driverIds : []).filter(function (id) {
+        return typeof id === "string" && id.trim();
+      })
+    ));
+    if (!uniqueDriverIds.length) {
+      return [];
+    }
+    var calls = uniqueDriverIds.map(currentDriverUserCall);
+    var batches;
+    try {
+      batches = await multiCall(api, calls);
+    } catch (error) {
+      batches = await Promise.all(calls.map(function (request) {
+        return call(api, request[0], request[1]).catch(function () { return []; });
+      }));
+    }
+    return uniqueDriverIds.map(function (driverId, index) {
+      return {
+        driverId: driverId,
+        record: (batches[index] || [])[0] || null
+      };
     });
   }
 
   return {
     FIFTH_WHEEL_CAPABILITY_GROUP_NAME: FIFTH_WHEEL_CAPABILITY_GROUP_NAME,
     call: call,
+    currentDriverUserCall: currentDriverUserCall,
+    deviceStatusInfoCall: deviceStatusInfoCall,
     diagnosticCalls: diagnosticCalls,
+    getCurrentDriverUsers: getCurrentDriverUsers,
     getDeviceStatusInfo: getDeviceStatusInfo,
     getSession: getSession,
     groupGet: groupGet,
