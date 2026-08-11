@@ -535,7 +535,7 @@
       section.appendChild(grid);
       return section;
     }
-    function expandable(records, headers, rowValues, details) {
+    function expandable(records, headers, rowValues, details, fullWidthDetails) {
       var wrapper = element("div", "siq-live-report-table-scroll");
       var node = element("table", "siq-live-report-table siq-live-report-table--expandable");
       var head = element("thead");
@@ -563,6 +563,18 @@
         var disclosure = element("details", "siq-report-details");
         disclosure.appendChild(element("summary", "", "View details"));
         disclosure.appendChild(details(record));
+        if (fullWidthDetails) {
+          disclosure.classList.add("siq-report-details--full-width");
+          disclosure.addEventListener("toggle", function () {
+            var open = disclosure.open;
+            Array.prototype.slice.call(row.children, 0, -1).forEach(function (cell) {
+              cell.hidden = open;
+            });
+            detailsCell.colSpan = open ? headers.length + 1 : 1;
+            disclosure.querySelector("summary").textContent = open
+              ? "Hide details" : "View details";
+          });
+        }
         detailsCell.appendChild(disclosure);
         row.appendChild(detailsCell);
         body.appendChild(row);
@@ -822,7 +834,7 @@
           }])
         );
         return content;
-      });
+      }, true);
     }
     function renderMoves(result, reports) {
       byId("siq-report-live-summary").replaceChildren();
@@ -946,6 +958,9 @@
         byId("siq-report-print-generated").textContent = "Generated: "
           + timestamp(Date.now(), result.window.timezone)
           + " (" + result.window.timezone + ")";
+        document.querySelectorAll(".siq-report-details[open]").forEach(function (details) {
+          details.open = false;
+        });
         try {
           windowObject.print();
           return true;

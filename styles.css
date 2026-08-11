@@ -3951,6 +3951,11 @@
   min-width: 520px;
 }
 
+.siq-report-details--full-width[open] {
+  width: 100%;
+  min-width: 0;
+}
+
 .siq-report-detail-sections {
   display: grid;
   gap: 10px;
