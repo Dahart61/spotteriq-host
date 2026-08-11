@@ -3930,6 +3930,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+.siq-live-report-table .siq-engine-hours-emphasis {
+  font-weight: 800;
+  color: var(--siq-text);
+  background: color-mix(in srgb, var(--siq-accent) 10%, transparent);
+}
+
 .siq-live-report-table--expandable {
   min-width: 900px;
 }

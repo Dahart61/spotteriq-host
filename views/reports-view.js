@@ -13,6 +13,7 @@
     overview: "Overview",
     drivers: "Driver Productivity",
     trucks: "Truck Utilization",
+    engineHours: "Engine Hours",
     moves: "Trailer Moves",
     speed: "Speed Activity",
     productivity: "Truck Utilization",
@@ -46,6 +47,10 @@
 
   function hours(value) {
     return Number.isFinite(value) ? value.toFixed(2) + " hr" : "Unavailable";
+  }
+
+  function hoursOne(value) {
+    return Number.isFinite(value) ? value.toFixed(1) + " hr" : "Unavailable";
   }
 
   function miles(value) {
@@ -244,6 +249,25 @@
         })
       };
     }
+    if (reportType === "engineHours") {
+      var engine = reports.engineHours;
+      return {
+        headers: ["Unit", "Begin", "End", "Hours Used", "Engine Running", "Adjustment"],
+        rows: engine.rows.map(function (row) {
+          return [
+            row.displayName,
+            row.begin ? hoursOne(row.begin.hours) : "Unavailable — review",
+            row.end ? hoursOne(row.end.hours) : "Unavailable — review",
+            Number.isFinite(row.hoursUsed) ? hoursOne(row.hoursUsed) : "Unavailable — review",
+            Number.isFinite(row.engineRunningMinutes)
+              ? duration(row.engineRunningMinutes) : "Unavailable",
+            row.adjustment.count
+              ? "Detected (" + row.adjustment.count + ") — review"
+              : "None detected"
+          ];
+        })
+      };
+    }
     var trucks = reports.trucks;
     var truckRows = trucks.map(function (truck) {
       return [
@@ -399,7 +423,9 @@
       var head = element("thead");
       var headRow = element("tr");
       headers.forEach(function (header) {
-        var cell = element("th", header.numeric ? "siq-live-report-numeric" : "", header.label);
+        var classes = [header.numeric ? "siq-live-report-numeric" : "",
+          header.emphasized ? "siq-engine-hours-emphasis" : ""].filter(Boolean).join(" ");
+        var cell = element("th", classes, header.label);
         cell.scope = "col";
         headRow.appendChild(cell);
       });
@@ -408,10 +434,11 @@
       rows.forEach(function (row) {
         var tableRow = element("tr");
         row.forEach(function (value, index) {
-          tableRow.appendChild(element(
-            "td", headers[index] && headers[index].numeric
-              ? "siq-live-report-numeric" : "", value
-          ));
+          var header = headers[index] || {};
+          var classes = [header.numeric ? "siq-live-report-numeric" : "",
+            header.emphasized ? "siq-engine-hours-emphasis" : ""]
+            .filter(Boolean).join(" ");
+          tableRow.appendChild(element("td", classes, value));
         });
         body.appendChild(tableRow);
       });
@@ -442,7 +469,9 @@
       var head = element("thead");
       var headRow = element("tr");
       headers.forEach(function (header) {
-        var cell = element("th", header.numeric ? "siq-live-report-numeric" : "", header.label);
+        var classes = [header.numeric ? "siq-live-report-numeric" : "",
+          header.emphasized ? "siq-engine-hours-emphasis" : ""].filter(Boolean).join(" ");
+        var cell = element("th", classes, header.label);
         cell.scope = "col";
         headRow.appendChild(cell);
       });
@@ -452,8 +481,11 @@
       records.forEach(function (record) {
         var row = element("tr");
         rowValues(record).forEach(function (value, index) {
-          row.appendChild(element("td", headers[index].numeric
-            ? "siq-live-report-numeric" : "", value));
+          var header = headers[index];
+          var classes = [header.numeric ? "siq-live-report-numeric" : "",
+            header.emphasized ? "siq-engine-hours-emphasis" : ""]
+            .filter(Boolean).join(" ");
+          row.appendChild(element("td", classes, value));
         });
         var detailsCell = element("td");
         var disclosure = element("details", "siq-report-details");
@@ -641,6 +673,82 @@
         return content;
       });
     }
+    function boundarySource(boundary) {
+      return boundary && boundary.source === "STORED"
+        ? "Stored telemetry" : "Interpolated boundary";
+    }
+    function renderEngineHours(result, reports) {
+      var engine = reports.engineHours;
+      var summary = engine.summary;
+      var metrics = [
+        metric("Total Units", String(summary.totalUnits)),
+        metric("Valid Hours Total", hoursOne(summary.validHoursTotal)),
+        metric("Reporting Units", String(summary.reportingUnits)),
+        metric("Adjustments Detected", String(summary.adjustmentCount))
+      ];
+      if (summary.reviewUnits) {
+        metrics.push(metric("Review Needed", String(summary.reviewUnits)));
+      }
+      byId("siq-report-live-summary").replaceChildren.apply(
+        byId("siq-report-live-summary"), metrics
+      );
+      if (!engine.rows.length) {
+        return empty("No authorized units are available for this facility.");
+      }
+      var headers = [
+        { label: "Unit" }, { label: "Begin", numeric: true },
+        { label: "End", numeric: true },
+        { label: "Hours Used", numeric: true, emphasized: true },
+        { label: "Engine Running", numeric: true }, { label: "Adjustment" }
+      ];
+      return expandable(engine.rows, headers, function (row) {
+        return [
+          row.displayName,
+          row.begin ? hoursOne(row.begin.hours) : "Unavailable — review",
+          row.end ? hoursOne(row.end.hours) : "Unavailable — review",
+          Number.isFinite(row.hoursUsed) ? hoursOne(row.hoursUsed) : "Unavailable — review",
+          Number.isFinite(row.engineRunningMinutes)
+            ? duration(row.engineRunningMinutes) : "Unavailable",
+          row.adjustment.count
+            ? "Detected (" + row.adjustment.count + ") — review"
+            : "None detected"
+        ];
+      }, function (row) {
+        var content = element("div", "siq-report-detail-sections");
+        content.append(
+          detailGroup("Boundary Evidence", [
+            ["Exact Start", timestamp(result.window.startUtc, result.window.timezone)],
+            ["Begin Raw Seconds", row.begin ? String(row.begin.rawSeconds) : "Unavailable"],
+            ["Begin Hours", row.begin ? hoursOne(row.begin.hours) : "Unavailable"],
+            ["Begin Source", row.begin ? boundarySource(row.begin) : "Unavailable"],
+            ["Exact End", timestamp(result.window.endUtc, result.window.timezone)],
+            ["End Raw Seconds", row.end ? String(row.end.rawSeconds) : "Unavailable"],
+            ["End Hours", row.end ? hoursOne(row.end.hours) : "Unavailable"],
+            ["End Source", row.end ? boundarySource(row.end) : "Unavailable"]
+          ]),
+          detailGroup("Reported Usage", [
+            ["Hours Used", Number.isFinite(row.hoursUsed)
+              ? hoursOne(row.hoursUsed) : "Unavailable — review"],
+            ["Engine Running Context", Number.isFinite(row.engineRunningMinutes)
+              ? duration(row.engineRunningMinutes) : "Unavailable"],
+            ["Review Reason", row.reason]
+          ]),
+          detailGroup("Adjustment Review", [
+            ["Stored Records Detected", String(row.adjustment.count)],
+            ["Interpretation", "Detection only; no adjustment amount is inferred."]
+          ])
+        );
+        if (row.adjustment.records.length) {
+          content.appendChild(element("h4", "siq-report-detail-table-title",
+            "Adjustment Records"));
+          content.appendChild(table([{ label: "Timestamp" }, { label: "Source" }],
+            row.adjustment.records.map(function (record) {
+              return [timestamp(record.timestamp, result.window.timezone), "Stored telemetry"];
+            })));
+        }
+        return content;
+      });
+    }
     function renderMoves(result, reports) {
       byId("siq-report-live-summary").replaceChildren();
       if (!reports.moves.length) {
@@ -690,8 +798,9 @@
       var content = reportType === "overview" ? renderOverview(reports)
         : reportType === "drivers" ? renderDrivers(reports)
           : reportType === "trucks" ? renderTrucks(reports)
-            : reportType === "moves" ? renderMoves(result, reports)
-              : renderSpeed(result, reports);
+            : reportType === "engineHours" ? renderEngineHours(result, reports)
+              : reportType === "moves" ? renderMoves(result, reports)
+                : renderSpeed(result, reports);
       byId("siq-report-live-table").replaceChildren(content);
       byId("siq-report-live-results").hidden = false;
       setActionsEnabled(true);
@@ -721,6 +830,12 @@
       });
       byId("siq-report-live-refresh").addEventListener("click", function () {
         controller.refresh();
+      });
+      byId("siq-report-current-month").addEventListener("click", function () {
+        controller.currentMonth();
+      });
+      byId("siq-report-previous-month").addEventListener("click", function () {
+        controller.previousMonth();
       });
       byId("siq-report-live-print").addEventListener("click", function () {
         controller.printReport();

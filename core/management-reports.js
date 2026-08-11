@@ -3,13 +3,16 @@
 
   var driverAttribution = typeof module === "object" && module.exports
     ? require("./driver-attribution") : root.SIQ_DRIVER_ATTRIBUTION;
-  var api = factory(driverAttribution);
+  var engineHoursReport = typeof module === "object" && module.exports
+    ? require("./engine-hours-report") : root.SIQ_ENGINE_HOURS_REPORT;
+  var api = factory(driverAttribution, engineHoursReport);
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   }
   root.SIQ_MANAGEMENT_REPORTS = api;
 }(typeof globalThis !== "undefined" ? globalThis : this, function (
-  driverAttribution
+  driverAttribution,
+  engineHoursReport
 ) {
   "use strict";
 
@@ -492,6 +495,7 @@
       trucks: trucks,
       moves: moveEvents,
       speedActivity: speedEvents,
+      engineHours: engineHoursReport.build(devices, byDevice, units, window),
       distanceStatus: "UNAVAILABLE_NO_TRUSTED_BOUNDED_DISTANCE_SOURCE",
       overview: {
         verifiedMoves: optionalSum(trucks.filter(function (truck) {

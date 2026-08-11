@@ -4,13 +4,17 @@
   var diagnosticChannels = typeof module === "object" && module.exports
     ? require("../core/diagnostic-channels")
     : root.SIQ_DIAGNOSTIC_CHANNELS;
-  var api = factory(diagnosticChannels);
+  var engineHoursReport = typeof module === "object" && module.exports
+    ? require("../core/engine-hours-report")
+    : root.SIQ_ENGINE_HOURS_REPORT;
+  var api = factory(diagnosticChannels, engineHoursReport);
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   }
   root.SIQ_MYGEOTAB_NORMALIZATION = api;
 }(typeof globalThis !== "undefined" ? globalThis : this, function (
-  diagnosticChannels
+  diagnosticChannels,
+  engineHoursReport
 ) {
   "use strict";
 
@@ -144,7 +148,8 @@
       if (numeric < 0) {
         return null;
       }
-      return mapping.unit === "hours" ? numeric : numeric / 3600;
+      return mapping.unit === "hours" ? numeric
+        : engineHoursReport.secondsToHours(numeric);
     }
     if (channel === CHANNELS.ODOMETER) {
       if (numeric < 0) {

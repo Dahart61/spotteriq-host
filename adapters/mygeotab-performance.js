@@ -28,7 +28,8 @@
     ignition: "DiagnosticIgnitionId",
     fifthWheel: "DiagnosticAux1Id",
     fuel: "DiagnosticTotalFuelUsedId",
-    engineHours: "DiagnosticEngineHoursId"
+    engineHours: "DiagnosticEngineHoursId",
+    engineHoursAdjustment: "DiagnosticEngineHoursAdjustmentId"
   });
 
   function statusDataCall(deviceId, diagnosticId, startUtc, endUtc) {
@@ -121,7 +122,8 @@
   function querySpecs(devices, window) {
     var specs = [];
     (devices || []).forEach(function (device) {
-      ["rpm", "ignition", "fuel", "engineHours"].forEach(function (source) {
+      ["rpm", "ignition", "fuel", "engineHours", "engineHoursAdjustment"]
+        .forEach(function (source) {
         specs.push({
           deviceId: device.deviceId,
           source: source,
@@ -129,7 +131,7 @@
             device.deviceId, DIAGNOSTICS[source], window.startUtc, window.endUtc
           )
         });
-      });
+        });
       if (device.fifthWheelCapabilityGroupMember === true) {
         specs.push({
           deviceId: device.deviceId,
@@ -165,7 +167,8 @@
     }));
     var byDevice = new Map((devices || []).map(function (device) {
       return [device.deviceId, {
-        rpm: [], ignition: [], fuel: [], engineHours: [], fifthWheel: [],
+        rpm: [], ignition: [], fuel: [], engineHours: [], engineHoursAdjustment: [],
+        fifthWheel: [],
         speed: [], driverEvents: []
       }];
     }));

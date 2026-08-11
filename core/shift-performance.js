@@ -3,12 +3,17 @@
 
   var timezone = typeof module === "object" && module.exports
     ? require("./timezone") : root.SIQ_TIMEZONE;
-  var api = factory(timezone);
+  var engineHoursReport = typeof module === "object" && module.exports
+    ? require("./engine-hours-report") : root.SIQ_ENGINE_HOURS_REPORT;
+  var api = factory(timezone, engineHoursReport);
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   }
   root.SIQ_SHIFT_PERFORMANCE = api;
-}(typeof globalThis !== "undefined" ? globalThis : this, function (timezone) {
+}(typeof globalThis !== "undefined" ? globalThis : this, function (
+  timezone,
+  engineHoursReport
+) {
   "use strict";
 
   var KPH_TO_MPH = 0.621371;
@@ -255,7 +260,7 @@
     classifyInterval((endMs - previousTime) / 60000);
 
     var fuelGallons = cumulativeDelta(data.fuel, LITERS_TO_GALLONS);
-    var engineHours = cumulativeDelta(data.engineHours, 1 / 3600);
+    var engineHours = engineHoursReport.cumulativeDeltaHours(data.engineHours);
     var averageGph = fuelGallons !== null && engineHours !== null && engineHours > 0
       ? fuelGallons / engineHours : null;
     var idleFuelGallons = averageGph !== null

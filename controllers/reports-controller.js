@@ -12,8 +12,30 @@
   "use strict";
 
   var REPORT_TYPES = Object.freeze([
-    "overview", "drivers", "trucks", "moves", "speed"
+    "overview", "drivers", "trucks", "engineHours", "moves", "speed"
   ]);
+
+  function monthSelection(nowMs, timeZone, previous) {
+    var parts = timezone.zonedParts(nowMs, timeZone, false);
+    var first = new Date(Date.UTC(parts.year, parts.month - 1, 1));
+    var start = new Date(first.getTime());
+    if (previous) {
+      start.setUTCMonth(start.getUTCMonth() - 1);
+    }
+    function localDate(date) {
+      return date.getUTCFullYear() + "-" + String(date.getUTCMonth() + 1).padStart(2, "0")
+        + "-" + String(date.getUTCDate()).padStart(2, "0");
+    }
+    return { custom: {
+      startDate: localDate(start),
+      startTime: "00:00",
+      endDate: previous ? localDate(first)
+        : parts.year + "-" + String(parts.month).padStart(2, "0")
+          + "-" + String(parts.day).padStart(2, "0"),
+      endTime: previous ? "00:00"
+        : String(parts.hour).padStart(2, "0") + ":" + String(parts.minute).padStart(2, "0")
+    } };
+  }
 
   function createReportsController(options) {
     var view = options.view;
@@ -109,6 +131,16 @@
       refresh: function () {
         return load(null, true);
       },
+      currentMonth: function () {
+        var selection = monthSelection(now(), context.facility.timezone, false);
+        view.setSelection(selection);
+        return load(selection, false);
+      },
+      previousMonth: function () {
+        var selection = monthSelection(now(), context.facility.timezone, true);
+        view.setSelection(selection);
+        return load(selection, false);
+      },
       printReport: function () {
         if (!lastResult || !context) {
           return false;
@@ -151,6 +183,7 @@
 
   return {
     REPORT_TYPES: REPORT_TYPES,
-    createReportsController: createReportsController
+    createReportsController: createReportsController,
+    monthSelection: monthSelection
   };
 }));

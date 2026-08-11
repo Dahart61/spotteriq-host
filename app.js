@@ -216,6 +216,16 @@
         field("End Time", "siq-report-live-end-time", "time")
       );
       var actions = productionElement("div", "siq-scope-actions siq-live-report-actions");
+      var currentMonth = identify(
+        productionElement("button", "siq-button", "Current Month"),
+        "siq-report-current-month"
+      );
+      currentMonth.type = "button";
+      var previousMonth = identify(
+        productionElement("button", "siq-button", "Previous Month"),
+        "siq-report-previous-month"
+      );
+      previousMonth.type = "button";
       var load = productionElement("button", "siq-button siq-button--primary", "Load Report");
       load.type = "submit";
       var refresh = identify(
@@ -235,7 +245,7 @@
       );
       exportCsv.type = "button";
       exportCsv.disabled = true;
-      actions.append(load, refresh, print, exportCsv);
+      actions.append(currentMonth, previousMonth, load, refresh, print, exportCsv);
       form.append(context, custom, actions);
 
       var tabs = productionElement("div", "siq-report-tabs");
@@ -244,6 +254,7 @@
         ["overview", "Overview"],
         ["drivers", "Driver Productivity"],
         ["trucks", "Truck Utilization"],
+        ["engineHours", "Engine Hours"],
         ["events", "Events"]
       ].forEach(function (item, index) {
         var button = productionElement(
