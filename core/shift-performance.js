@@ -26,7 +26,14 @@
   var LITERS_TO_GALLONS = 0.264172;
   var MOVING_MPH = 2;
   var ENGINE_RUNNING_RPM = 400;
-  var PARKED_COMMUNICATION_MAX_GAP_HOURS = 25;
+  // A stored state transition can survive ordinary sampling gaps, but not a
+  // genuine historical communication break. This is the one shared boundary
+  // used for historical state continuity and parked-meter continuity.
+  var HISTORICAL_CONTINUITY_MAX_GAP_HOURS = 25;
+  var HISTORICAL_CONTINUITY_MAX_GAP_MS =
+    HISTORICAL_CONTINUITY_MAX_GAP_HOURS * 60 * 60 * 1000;
+  // Retained as a compatibility alias for existing consumers.
+  var PARKED_COMMUNICATION_MAX_GAP_HOURS = HISTORICAL_CONTINUITY_MAX_GAP_HOURS;
   var SHUTDOWN_BOUNDARY_MAX_MINUTES = 10;
   var SHUTDOWN_ASYNC_MAX_SECONDS = 60;
   var SHUTDOWN_RUNNING_TRANSITION_MAX_MINUTES = 2;
@@ -248,7 +255,7 @@
     }
     var communicationPoints = [startMs].concat(communication.map(recordTime));
     communicationPoints.push(endMs);
-    var maximumGapMs = PARKED_COMMUNICATION_MAX_GAP_HOURS * 60 * 60 * 1000;
+    var maximumGapMs = HISTORICAL_CONTINUITY_MAX_GAP_MS;
     var excessiveGap = communicationPoints.some(function (time, index) {
       return index > 0 && time - communicationPoints[index - 1] > maximumGapMs;
     });
@@ -274,7 +281,7 @@
       endUtc: endUtc,
       communication: {
         source: "LOG_RECORD",
-        maximumGapHours: PARKED_COMMUNICATION_MAX_GAP_HOURS,
+        maximumGapHours: HISTORICAL_CONTINUITY_MAX_GAP_HOURS,
         observationCount: communication.length,
         lastObservedAt: communication.length
           ? new Date(recordTime(communication[communication.length - 1])).toISOString()
@@ -406,7 +413,7 @@
     }).filter(Boolean);
   }
 
-  function continuousIgnitionSamples(ignitionRecords, evidenceRecords, freshnessMs) {
+  function historicalIgnitionSamples(ignitionRecords, evidenceRecords, continuityMs) {
     var events = storedSamples(ignitionRecords, function (record) {
       return booleanLevel(valueOf(record, "data", "Data"));
     }).map(function (sample) {
@@ -425,7 +432,7 @@
     var samples = [];
     events.forEach(function (event) {
       var eventMs = Date.parse(event.timestamp);
-      if (lastEvidenceMs !== null && eventMs - lastEvidenceMs > freshnessMs) {
+      if (lastEvidenceMs !== null && eventMs - lastEvidenceMs > continuityMs) {
         currentIgnition = null;
       }
       if (event.ignition) {
@@ -449,12 +456,13 @@
       endUtc: window.endUtc,
       compactStates: true,
       telemetry: {
-        // Ignition is a state-change diagnostic. Continuous stored RPM/LogRecord
-        // evidence reaffirms the last stored transition only while telemetry stays
-        // within the approved freshness window. A gap invalidates the latch and a
-        // later RPM sample cannot revive it without a new stored ignition record.
-        ignitionSamples: continuousIgnitionSamples(
-          data && data.ignition, storedEvidence, capability.ignitionFreshnessMs
+        // Ignition is a latched historical transition. Stored RPM/LogRecord
+        // evidence carries that latch across ordinary sampling gaps. Only the
+        // shared historical-continuity boundary clears it; the timeline still
+        // applies independent 120-second RPM, ignition, and communication
+        // freshness while classifying each interval.
+        ignitionSamples: historicalIgnitionSamples(
+          data && data.ignition, storedEvidence, HISTORICAL_CONTINUITY_MAX_GAP_MS
         ),
         rpmSamples: storedSamples(data && data.rpm, recordData),
         speedSamples: storedSamples(logRecords, speedMph),
@@ -712,6 +720,8 @@
 
   return {
     ENGINE_RUNNING_RPM: ENGINE_RUNNING_RPM,
+    HISTORICAL_CONTINUITY_MAX_GAP_HOURS: HISTORICAL_CONTINUITY_MAX_GAP_HOURS,
+    HISTORICAL_CONTINUITY_MAX_GAP_MS: HISTORICAL_CONTINUITY_MAX_GAP_MS,
     KPH_TO_MPH: KPH_TO_MPH,
     LITERS_TO_GALLONS: LITERS_TO_GALLONS,
     MOVING_MPH: MOVING_MPH,
@@ -720,7 +730,8 @@
     activityIntervals: activityIntervals,
     analyzeUnit: analyzeUnit,
     buildReportTimeline: buildReportTimeline,
-    continuousIgnitionSamples: continuousIgnitionSamples,
+    continuousIgnitionSamples: historicalIgnitionSamples,
+    historicalIgnitionSamples: historicalIgnitionSamples,
     countVerifiedMoves: countVerifiedMoves,
     cumulativeDelta: cumulativeDelta,
     facilitySummary: facilitySummary,

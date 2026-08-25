@@ -25,6 +25,8 @@
   var RESULT_LIMIT = 50000;
   var ADJUSTMENT_TIMEOUT_MS = 8000;
   var REPORT_STATE_LOOKBACK_MS = 120000;
+  var REPORT_HISTORY_LOOKBACK_MS =
+    shiftPerformance.HISTORICAL_CONTINUITY_MAX_GAP_MS;
   var DIAGNOSTICS = Object.freeze({
     rpm: "DiagnosticEngineSpeedId",
     ignition: "DiagnosticIgnitionId",
@@ -167,16 +169,19 @@
     var stateStartUtc = new Date(
       Date.parse(window.startUtc) - REPORT_STATE_LOOKBACK_MS
     ).toISOString();
+    var historyStartUtc = new Date(
+      Date.parse(window.startUtc) - REPORT_HISTORY_LOOKBACK_MS
+    ).toISOString();
     (devices || []).forEach(function (device) {
       ["rpm", "ignition"]
         .forEach(function (source) {
         specs.push({
           deviceId: device.deviceId,
           source: source,
-          startUtc: stateStartUtc,
+          startUtc: historyStartUtc,
           endUtc: window.endUtc,
           call: statusDataCall(
-            device.deviceId, DIAGNOSTICS[source], stateStartUtc, window.endUtc
+            device.deviceId, DIAGNOSTICS[source], historyStartUtc, window.endUtc
           )
         });
         });
@@ -205,9 +210,9 @@
       specs.push({
         deviceId: device.deviceId,
         source: "speed",
-        startUtc: stateStartUtc,
+        startUtc: historyStartUtc,
         endUtc: window.endUtc,
-        call: logRecordCall(device.deviceId, stateStartUtc, window.endUtc)
+        call: logRecordCall(device.deviceId, historyStartUtc, window.endUtc)
       });
     });
     return specs;
@@ -482,6 +487,7 @@
     ADJUSTMENT_TIMEOUT_MS: ADJUSTMENT_TIMEOUT_MS,
     DIAGNOSTICS: DIAGNOSTICS,
     RESULT_LIMIT: RESULT_LIMIT,
+    REPORT_HISTORY_LOOKBACK_MS: REPORT_HISTORY_LOOKBACK_MS,
     REPORT_STATE_LOOKBACK_MS: REPORT_STATE_LOOKBACK_MS,
     authorizedRecords: authorizedRecords,
     dedupe: dedupe,
