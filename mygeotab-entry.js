@@ -222,7 +222,7 @@
         reportsView = root.SIQ_REPORTS_VIEW.createReportsDomView(root.document);
         reportsController = root.SIQ_REPORTS_CONTROLLER.createReportsController({
           view: reportsView,
-          performanceController: performanceController
+          dataSource: root.SIQ_MYGEOTAB_PERFORMANCE
         });
         reportsView.bind(reportsController);
       }
@@ -250,6 +250,13 @@
         var reportsButton = root.document.querySelector('[data-module="reports"]');
         reportsButton.addEventListener("click", function () {
           reportsController.open();
+        });
+        root.document.querySelectorAll('[data-module]').forEach(function (navButton) {
+          if (navButton.getAttribute("data-module") !== "reports") {
+            navButton.addEventListener("click", function () {
+              reportsController.close();
+            });
+          }
         });
       }
       var panel = root.document.getElementById("siq-module-performance");

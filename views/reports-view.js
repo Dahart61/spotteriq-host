@@ -9,6 +9,8 @@
 }(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
+  var MAX_RENDER_ROWS = 500;
+
   var TITLES = Object.freeze({
     overview: "Overview",
     drivers: "Driver Productivity",
@@ -449,6 +451,20 @@
       byId("siq-report-live-print").disabled = !enabled;
       byId("siq-report-live-export-csv").disabled = !enabled;
     }
+    function setLoading(loading) {
+      var load = byId("siq-report-live-load");
+      load.disabled = loading;
+      load.textContent = loading ? "Loading Report..." : "Load Report";
+      byId("siq-report-live-refresh").disabled = loading;
+      byId("siq-report-current-month").disabled = loading;
+      byId("siq-report-previous-month").disabled = loading;
+    }
+    function showReady(message) {
+      byId("siq-report-live-status").textContent = message || "";
+      byId("siq-report-live-results").hidden = true;
+      setActionsEnabled(false);
+      setLoading(false);
+    }
     function clear() {
       context = null;
       byId("siq-report-live-status").textContent = "";
@@ -460,6 +476,7 @@
           byId("siq-report-print-" + part).textContent = "";
         });
       setActionsEnabled(false);
+      setLoading(false);
       setContext(null);
     }
     function metric(label, value) {
@@ -848,7 +865,7 @@
         { label: "Time" }, { label: "Unit" }, { label: "Driver" },
         { label: "Move Start" }, { label: "Move Completed" },
         { label: "Duration", numeric: true }
-      ], reports.moves.map(function (move) {
+      ], reports.moves.slice(0, MAX_RENDER_ROWS).map(function (move) {
         return [timestamp(move.completionTimestamp, result.window.timezone),
           move.deviceDisplayName, move.driverLabel,
           timestamp(move.couplingTimestamp, result.window.timezone),
@@ -867,7 +884,7 @@
       return table([
         { label: "Unit" }, { label: "Driver" },
         { label: "Peak Speed", numeric: true }, { label: "Peak Timestamp" }
-      ], reports.speedActivity.map(function (event) {
+      ], reports.speedActivity.slice(0, MAX_RENDER_ROWS).map(function (event) {
         return [event.deviceDisplayName, event.driverLabel,
           speed(event.peakSpeedMph),
           timestamp(event.peakTimestamp, result.window.timezone)];
@@ -918,6 +935,13 @@
         event.preventDefault();
         controller.load(selectedWindow(), false);
       });
+      ["siq-report-live-start-date", "siq-report-live-start-time",
+        "siq-report-live-end-date", "siq-report-live-end-time"]
+        .forEach(function (id) {
+          byId(id).addEventListener("change", function () {
+            controller.invalidateSelection();
+          });
+        });
       byId("siq-report-live-refresh").addEventListener("click", function () {
         controller.refresh();
       });
@@ -947,6 +971,7 @@
       setActiveReport: setActiveReport,
       setContext: setContext,
       setSelection: setSelection,
+      setLoading: setLoading,
       printReport: function (result, nextContext, reportType) {
         if (printing || !windowObject || typeof windowObject.print !== "function") {
           return false;
@@ -1007,15 +1032,21 @@
       },
       showError: function (message) {
         byId("siq-report-live-status").textContent = message;
+        setLoading(false);
       },
       showLoading: function () {
         byId("siq-report-live-status").textContent = "Loading report...";
-      }
+      },
+      showProgress: function (message) {
+        byId("siq-report-live-status").textContent = message;
+      },
+      showReady: showReady
     };
   }
 
   return {
     TITLES: TITLES,
+    MAX_RENDER_ROWS: MAX_RENDER_ROWS,
     csvDocument: csvDocument,
     csvEscape: csvEscape,
     createReportsDomView: createReportsDomView,

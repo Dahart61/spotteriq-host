@@ -26,6 +26,16 @@
   ]);
   var CLEAR_TYPES = Object.freeze(["ResetDriver"]);
   var SOURCE = "MyGeotab DriverChange";
+  var RESULT_LIMIT = 50000;
+  var DRIVER_CHUNK_MS = 7 * 24 * 60 * 60 * 1000;
+
+  function assertCurrent(options) {
+    if (options && typeof options.isStale === "function" && options.isStale()) {
+      var error = new Error("The report request was superseded");
+      error.code = "REPORT_REQUEST_STALE";
+      throw error;
+    }
+  }
 
   function finding(code, message, sourceEventId) {
     return {
@@ -74,7 +84,7 @@
         toDate: range.toDate,
         includeOverlappedChanges: true
       },
-      resultsLimit: 50000,
+      resultsLimit: RESULT_LIMIT,
       sort: {
         sortBy: "date",
         sortDirection: "asc"
@@ -201,7 +211,77 @@
     return identities;
   }
 
-  async function fetchAuthorizedDriverEvents(api, requests, priorIdentities) {
+  function chunkRanges(ranges) {
+    var result = [];
+    (ranges || []).forEach(function (range) {
+      var start = Date.parse(range.fromDate);
+      var end = Date.parse(range.toDate);
+      for (var cursor = start; cursor < end; cursor += DRIVER_CHUNK_MS) {
+        result.push({
+          deviceId: range.deviceId,
+          fromDate: new Date(cursor).toISOString(),
+          toDate: new Date(Math.min(end, cursor + DRIVER_CHUNK_MS)).toISOString()
+        });
+      }
+    });
+    return result;
+  }
+
+  async function fetchRangeComplete(api, range, options, depth) {
+    assertCurrent(options);
+    var request = driverChangeCall(range);
+    if (options && options.stats) { options.stats.apiCalls += 1; }
+    var batch = await client.call(api, request[0], request[1]);
+    assertCurrent(options);
+    if (options && options.stats) {
+      options.stats.maxRecordsPerCall = Math.max(
+        options.stats.maxRecordsPerCall, batch.length
+      );
+    }
+    if (batch.length < RESULT_LIMIT) {
+      return batch;
+    }
+    var start = Date.parse(range.fromDate);
+    var end = Date.parse(range.toDate);
+    if (depth >= 16 || end - start <= 1000) {
+      var error = new Error("Driver history result limit reached after bounded chunking");
+      error.code = "DRIVER_RESULT_LIMIT";
+      throw error;
+    }
+    var midpoint = new Date(start + Math.floor((end - start) / 2)).toISOString();
+    var left = await fetchRangeComplete(api, {
+      deviceId: range.deviceId, fromDate: range.fromDate, toDate: midpoint
+    }, options, depth + 1);
+    var right = await fetchRangeComplete(api, {
+      deviceId: range.deviceId, fromDate: midpoint, toDate: range.toDate
+    }, options, depth + 1);
+    return left.concat(right);
+  }
+
+  async function fetchRangesBounded(api, ranges, options) {
+    var batches = new Array(ranges.length);
+    var next = 0;
+    async function worker() {
+      while (next < ranges.length) {
+        assertCurrent(options);
+        var index = next;
+        next += 1;
+        batches[index] = await fetchRangeComplete(api, ranges[index], options, 0);
+        await new Promise(function (resolve) { setTimeout(resolve, 0); });
+      }
+    }
+    var concurrency = Math.min(
+      options.maxConcurrency || 3, Math.max(1, ranges.length)
+    );
+    var workers = [];
+    for (var index = 0; index < concurrency; index += 1) {
+      workers.push(worker());
+    }
+    await Promise.all(workers);
+    return batches;
+  }
+
+  async function fetchAuthorizedDriverEvents(api, requests, priorIdentities, options) {
     var ranges = (requests || []).map(exactRange);
     if (!ranges.length) {
       return {
@@ -211,10 +291,13 @@
         identities: new Map(priorIdentities || [])
       };
     }
-    var batches = await client.safeMultiCall(
-      api,
-      ranges.map(driverChangeCall)
-    );
+    if (options && options.reportType) {
+      ranges = chunkRanges(ranges);
+    }
+    var batches = options && options.reportType
+      ? await fetchRangesBounded(api, ranges, options)
+      : await client.safeMultiCall(api, ranges.map(driverChangeCall));
+    assertCurrent(options);
     var findings = [];
     var events = [];
     batches.forEach(function (batch, index) {
@@ -248,6 +331,7 @@
     });
     events = dedupeEvents(events);
     var identities = await resolveIdentities(api, events, priorIdentities);
+    assertCurrent(options);
     events = events.map(function (event) {
       if (!event.driverId) {
         return event;
@@ -270,9 +354,12 @@
   return {
     ASSIGNMENT_TYPES: ASSIGNMENT_TYPES.slice(),
     CLEAR_TYPES: CLEAR_TYPES.slice(),
+    DRIVER_CHUNK_MS: DRIVER_CHUNK_MS,
+    RESULT_LIMIT: RESULT_LIMIT,
     SOURCE: SOURCE,
     dedupeEvents: dedupeEvents,
     driverChangeCall: driverChangeCall,
+    fetchRangeComplete: fetchRangeComplete,
     fetchAuthorizedDriverEvents: fetchAuthorizedDriverEvents,
     isUnknownDriverId: isUnknownDriverId,
     normalizeDriverChange: normalizeDriverChange,

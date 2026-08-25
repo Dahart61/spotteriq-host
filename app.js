@@ -226,7 +226,10 @@
         "siq-report-previous-month"
       );
       previousMonth.type = "button";
-      var load = productionElement("button", "siq-button siq-button--primary", "Load Report");
+      var load = identify(
+        productionElement("button", "siq-button siq-button--primary", "Load Report"),
+        "siq-report-live-load"
+      );
       load.type = "submit";
       var refresh = identify(
         productionElement("button", "siq-button", "Refresh"),
