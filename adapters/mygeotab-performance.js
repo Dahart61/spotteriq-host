@@ -39,18 +39,18 @@
   });
   var REPORT_SOURCE_PLANS = Object.freeze({
     overview: Object.freeze([
-      "rpm", "ignition", "fuel", "engineHours", "engineHoursAdjustment",
+      "rpm", "ignition", "fuel", "engineHours",
       "fifthWheel", "speed", "driverEvents"
     ]),
     drivers: Object.freeze([
       "rpm", "ignition", "fifthWheel", "speed", "driverEvents"
     ]),
     trucks: Object.freeze([
-      "rpm", "ignition", "fuel", "engineHours", "engineHoursAdjustment",
+      "rpm", "ignition", "fuel", "engineHours",
       "fifthWheel", "speed", "driverEvents"
     ]),
     engineHours: Object.freeze([
-      "engineHours", "engineHoursAdjustment"
+      "engineHours"
     ]),
     moves: Object.freeze(["fifthWheel", "speed", "driverEvents"]),
     speed: Object.freeze(["speed", "driverEvents"])
@@ -500,6 +500,13 @@
       // Missing or incomplete evidence leaves carry-forward unavailable.
     }
     assertCurrent(options);
+    var reportSources = options && options.reportType
+      && REPORT_SOURCE_PLANS[options.reportType];
+    if (reportSources && reportSources.indexOf("engineHoursAdjustment") === -1) {
+      // The live database does not expose this optional diagnostic. Report loads
+      // fail closed as "Not available" instead of making rejected API calls.
+      return;
+    }
     try {
       var adjustmentCalls = evidenced.map(function (device) {
         var record = byDevice.get(device.deviceId).engineHoursCarryForward.latestStoredMeter;
