@@ -456,6 +456,8 @@
       load.disabled = loading;
       load.textContent = loading ? "Loading Report..." : "Load Report";
       byId("siq-report-live-refresh").disabled = loading;
+      byId("siq-report-today").disabled = loading;
+      byId("siq-report-last-seven-days").disabled = loading;
       byId("siq-report-current-month").disabled = loading;
       byId("siq-report-previous-month").disabled = loading;
     }
@@ -914,6 +916,11 @@
     }
     function setActiveReport(reportType) {
       var isEvent = reportType === "moves" || reportType === "speed";
+      var isEngineHours = reportType === "engineHours";
+      byId("siq-report-today").hidden = isEngineHours;
+      byId("siq-report-last-seven-days").hidden = isEngineHours;
+      byId("siq-report-current-month").hidden = !isEngineHours;
+      byId("siq-report-previous-month").hidden = !isEngineHours;
       document.querySelectorAll(".siq-report-tabs [data-live-report]")
         .forEach(function (button) {
           var key = button.getAttribute("data-live-report");
@@ -944,6 +951,12 @@
         });
       byId("siq-report-live-refresh").addEventListener("click", function () {
         controller.refresh();
+      });
+      byId("siq-report-today").addEventListener("click", function () {
+        controller.today();
+      });
+      byId("siq-report-last-seven-days").addEventListener("click", function () {
+        controller.lastSevenDays();
       });
       byId("siq-report-current-month").addEventListener("click", function () {
         controller.currentMonth();

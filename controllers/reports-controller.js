@@ -27,6 +27,49 @@
     "This report covers a large amount of operating data. Please select a reporting period of 7 days or less.";
   var LOAD_ERROR_MESSAGE =
     "Report could not be completed. Try a shorter reporting period.";
+  var HOUR_MS = 60 * 60 * 1000;
+
+  function pad2(value) {
+    return String(value).padStart(2, "0");
+  }
+
+  function selectionParts(instantMs, timeZone) {
+    var parts = timezone.zonedParts(instantMs, timeZone, false);
+    return {
+      date: parts.year + "-" + pad2(parts.month) + "-" + pad2(parts.day),
+      time: pad2(parts.hour) + ":" + pad2(parts.minute)
+    };
+  }
+
+  function offsetEndMs(nowMs) {
+    return nowMs - HOUR_MS;
+  }
+
+  function todaySelection(nowMs, timeZone) {
+    var today = selectionParts(nowMs, timeZone);
+    var end = selectionParts(offsetEndMs(nowMs), timeZone);
+    if (end.date !== today.date) {
+      end = today;
+    }
+    return { custom: {
+      startDate: today.date,
+      startTime: "00:00",
+      endDate: end.date,
+      endTime: end.time
+    } };
+  }
+
+  function lastSevenDaysSelection(nowMs, timeZone) {
+    var endMs = offsetEndMs(nowMs);
+    var start = selectionParts(endMs - MAX_GENERAL_REPORT_MS, timeZone);
+    var end = selectionParts(endMs, timeZone);
+    return { custom: {
+      startDate: start.date,
+      startTime: start.time,
+      endDate: end.date,
+      endTime: end.time
+    } };
+  }
 
   function monthSelection(nowMs, timeZone, previous) {
     var parts = timezone.zonedParts(nowMs, timeZone, false);
@@ -39,14 +82,17 @@
       return date.getUTCFullYear() + "-" + String(date.getUTCMonth() + 1).padStart(2, "0")
         + "-" + String(date.getUTCDate()).padStart(2, "0");
     }
+    var currentMonthStart = localDate(first);
+    var end = previous ? { date: currentMonthStart, time: "00:00" }
+      : selectionParts(offsetEndMs(nowMs), timeZone);
+    if (!previous && end.date < currentMonthStart) {
+      end = selectionParts(nowMs, timeZone);
+    }
     return { custom: {
       startDate: localDate(start),
       startTime: "00:00",
-      endDate: previous ? localDate(first)
-        : parts.year + "-" + String(parts.month).padStart(2, "0")
-          + "-" + String(parts.day).padStart(2, "0"),
-      endTime: previous ? "00:00"
-        : String(parts.hour).padStart(2, "0") + ":" + String(parts.minute).padStart(2, "0")
+      endDate: end.date,
+      endTime: end.time
     } };
   }
 
@@ -64,23 +110,6 @@
     var selectedReport = "overview";
     var selectedEventReport = "moves";
     var now = typeof options.now === "function" ? options.now : Date.now;
-
-    function pad2(value) {
-      return String(value).padStart(2, "0");
-    }
-
-    function todaySoFarSelection(nowMs, timeZone) {
-      var parts = timezone.zonedParts(nowMs, timeZone, false);
-      var localDate = parts.year + "-" + pad2(parts.month) + "-" + pad2(parts.day);
-      return {
-        custom: {
-          startDate: localDate,
-          startTime: "00:00",
-          endDate: localDate,
-          endTime: pad2(parts.hour) + ":" + pad2(parts.minute)
-        }
-      };
-    }
 
     function deviceKey(devices) {
       return (devices || []).map(function (device) {
@@ -244,7 +273,7 @@
         context = nextContext;
         view.setContext(context);
         if (context && context.facility && !lastSelection) {
-          lastSelection = todaySoFarSelection(now(), context.facility.timezone);
+          lastSelection = todaySelection(now(), context.facility.timezone);
           view.setSelection(lastSelection);
         }
       },
@@ -277,6 +306,22 @@
       },
       refresh: function () {
         return load(null, true);
+      },
+      today: function () {
+        if (!context || !context.facility) {
+          return Promise.resolve(null);
+        }
+        var selection = todaySelection(now(), context.facility.timezone);
+        view.setSelection(selection);
+        return load(selection, false);
+      },
+      lastSevenDays: function () {
+        if (!context || !context.facility) {
+          return Promise.resolve(null);
+        }
+        var selection = lastSevenDaysSelection(now(), context.facility.timezone);
+        view.setSelection(selection);
+        return load(selection, false);
       },
       currentMonth: function () {
         if (!context || !context.facility) {
@@ -341,6 +386,8 @@
     MAX_GENERAL_REPORT_MS: MAX_GENERAL_REPORT_MS,
     REPORT_TYPES: REPORT_TYPES,
     createReportsController: createReportsController,
-    monthSelection: monthSelection
+    lastSevenDaysSelection: lastSevenDaysSelection,
+    monthSelection: monthSelection,
+    todaySelection: todaySelection
   };
 }));

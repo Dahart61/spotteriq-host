@@ -216,16 +216,28 @@
         field("End Time", "siq-report-live-end-time", "time")
       );
       var actions = productionElement("div", "siq-scope-actions siq-live-report-actions");
+      var today = identify(
+        productionElement("button", "siq-button", "Today"),
+        "siq-report-today"
+      );
+      today.type = "button";
+      var lastSevenDays = identify(
+        productionElement("button", "siq-button", "Last 7 Days"),
+        "siq-report-last-seven-days"
+      );
+      lastSevenDays.type = "button";
       var currentMonth = identify(
         productionElement("button", "siq-button", "Current Month"),
         "siq-report-current-month"
       );
       currentMonth.type = "button";
+      currentMonth.hidden = true;
       var previousMonth = identify(
         productionElement("button", "siq-button", "Previous Month"),
         "siq-report-previous-month"
       );
       previousMonth.type = "button";
+      previousMonth.hidden = true;
       var load = identify(
         productionElement("button", "siq-button siq-button--primary", "Load Report"),
         "siq-report-live-load"
@@ -248,7 +260,10 @@
       );
       exportCsv.type = "button";
       exportCsv.disabled = true;
-      actions.append(currentMonth, previousMonth, load, refresh, print, exportCsv);
+      actions.append(
+        today, lastSevenDays, currentMonth, previousMonth,
+        load, refresh, print, exportCsv
+      );
       form.append(context, custom, actions);
 
       var tabs = productionElement("div", "siq-report-tabs");
