@@ -105,7 +105,7 @@
       inFlightSelectionKey = selectionKey;
       view.showLoading(window, context);
       var request = performanceAdapter.fetchShift(
-        context.api, context.devices, window
+        context.api, context.devices, window, { facility: context.facility }
       ).then(function (result) {
         if (requestGeneration !== generation) {
           return Object.assign({}, result, { stale: true });

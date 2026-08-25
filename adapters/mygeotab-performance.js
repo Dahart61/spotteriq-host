@@ -24,6 +24,7 @@
 
   var RESULT_LIMIT = 50000;
   var ADJUSTMENT_TIMEOUT_MS = 8000;
+  var REPORT_STATE_LOOKBACK_MS = 120000;
   var DIAGNOSTICS = Object.freeze({
     rpm: "DiagnosticEngineSpeedId",
     ignition: "DiagnosticIgnitionId",
@@ -163,30 +164,50 @@
 
   function querySpecs(devices, window) {
     var specs = [];
+    var stateStartUtc = new Date(
+      Date.parse(window.startUtc) - REPORT_STATE_LOOKBACK_MS
+    ).toISOString();
     (devices || []).forEach(function (device) {
-      ["rpm", "ignition", "fuel", "engineHours", "engineHoursAdjustment"]
+      ["rpm", "ignition"]
         .forEach(function (source) {
         specs.push({
           deviceId: device.deviceId,
           source: source,
+          startUtc: stateStartUtc,
+          endUtc: window.endUtc,
+          call: statusDataCall(
+            device.deviceId, DIAGNOSTICS[source], stateStartUtc, window.endUtc
+          )
+        });
+        });
+      ["fuel", "engineHours", "engineHoursAdjustment"].forEach(function (source) {
+        specs.push({
+          deviceId: device.deviceId,
+          source: source,
+          startUtc: window.startUtc,
+          endUtc: window.endUtc,
           call: statusDataCall(
             device.deviceId, DIAGNOSTICS[source], window.startUtc, window.endUtc
           )
         });
-        });
+      });
       if (device.fifthWheelCapabilityGroupMember === true) {
         specs.push({
           deviceId: device.deviceId,
           source: "fifthWheel",
+          startUtc: stateStartUtc,
+          endUtc: window.endUtc,
           call: statusDataCall(
-            device.deviceId, DIAGNOSTICS.fifthWheel, window.startUtc, window.endUtc
+            device.deviceId, DIAGNOSTICS.fifthWheel, stateStartUtc, window.endUtc
           )
         });
       }
       specs.push({
         deviceId: device.deviceId,
         source: "speed",
-        call: logRecordCall(device.deviceId, window.startUtc, window.endUtc)
+        startUtc: stateStartUtc,
+        endUtc: window.endUtc,
+        call: logRecordCall(device.deviceId, stateStartUtc, window.endUtc)
       });
     });
     return specs;
@@ -364,8 +385,8 @@
       return fetchComplete(
         api,
         requiredSpecs[index].call,
-        window.startUtc,
-        window.endUtc,
+        requiredSpecs[index].startUtc,
+        requiredSpecs[index].endUtc,
         batch || [],
         0
       );
@@ -383,8 +404,8 @@
         return fetchComplete(
           api,
           adjustmentSpecs[index].call,
-          window.startUtc,
-          window.endUtc,
+          adjustmentSpecs[index].startUtc,
+          adjustmentSpecs[index].endUtc,
           batch || [],
           0
         );
@@ -434,7 +455,9 @@
       }
     });
     var units = (devices || []).map(function (device) {
-      return shiftPerformance.analyzeUnit(device, byDevice.get(device.deviceId), window);
+      return shiftPerformance.analyzeUnit(
+        device, byDevice.get(device.deviceId), window, options
+      );
     });
     var reports = managementReports.build(devices, byDevice, units, window);
     return {
@@ -448,8 +471,8 @@
           typeName: spec.call[1].typeName,
           deviceId: spec.deviceId,
           source: spec.source,
-          startUtc: window.startUtc,
-          endUtc: window.endUtc
+          startUtc: spec.startUtc,
+          endUtc: spec.endUtc
         };
       })
     };
@@ -459,6 +482,7 @@
     ADJUSTMENT_TIMEOUT_MS: ADJUSTMENT_TIMEOUT_MS,
     DIAGNOSTICS: DIAGNOSTICS,
     RESULT_LIMIT: RESULT_LIMIT,
+    REPORT_STATE_LOOKBACK_MS: REPORT_STATE_LOOKBACK_MS,
     authorizedRecords: authorizedRecords,
     dedupe: dedupe,
     fetchComplete: fetchComplete,

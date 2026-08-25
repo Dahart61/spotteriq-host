@@ -5,14 +5,20 @@
     ? require("./timezone") : root.SIQ_TIMEZONE;
   var engineHoursReport = typeof module === "object" && module.exports
     ? require("./engine-hours-report") : root.SIQ_ENGINE_HOURS_REPORT;
-  var api = factory(timezone, engineHoursReport);
+  var timeline = typeof module === "object" && module.exports
+    ? require("./timeline") : root.SIQ_TIMELINE;
+  var operationalStates = typeof module === "object" && module.exports
+    ? require("./operational-states") : root.SIQ_OPERATIONAL_STATES;
+  var api = factory(timezone, engineHoursReport, timeline, operationalStates);
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   }
   root.SIQ_SHIFT_PERFORMANCE = api;
 }(typeof globalThis !== "undefined" ? globalThis : this, function (
   timezone,
-  engineHoursReport
+  engineHoursReport,
+  timeline,
+  operationalStates
 ) {
   "use strict";
 
@@ -24,6 +30,7 @@
   var SHUTDOWN_BOUNDARY_MAX_MINUTES = 10;
   var SHUTDOWN_ASYNC_MAX_SECONDS = 60;
   var SHUTDOWN_RUNNING_TRANSITION_MAX_MINUTES = 2;
+  var DEFAULT_REPORT_FRESHNESS_MS = 120000;
 
   function resolveWindow(selection, nowMs, timeZone) {
     var custom = selection && selection.custom || {};
@@ -352,38 +359,198 @@
     }, null);
   }
 
-  function analyzeUnit(device, data, window) {
-    var startMs = Date.parse(window.startUtc);
-    var endMs = Date.parse(window.endUtc);
-    var capable = device.fifthWheelCapabilityGroupMember === true;
-    var events = [];
-    function add(records, type, transform) {
-      sorted(records).forEach(function (record) {
-        var time = recordTime(record);
-        if (time < startMs || time > endMs) {
-          return;
-        }
-        var value = transform(record);
-        if (value !== null && value !== undefined) {
-          events.push({ time: time, type: type, value: value });
-        }
-      });
-    }
-    add(data.rpm, "rpm", recordData);
-    add(data.speed, "speed", speedMph);
-    add(data.ignition, "ignition", function (record) {
+  function positive(value, fallback) {
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  }
+
+  function reportCapability(device, options) {
+    var configured = device && (device.reportCapability
+      || device.operationalCapability || device.capability) || {};
+    var facility = options && options.facility || {};
+    var communication = facility.communicationFreshness || {};
+    return {
+      deviceId: device.deviceId,
+      // Engine/motion reporting is independent of Fifth Wheel classification.
+      // Fifth Wheel metrics continue through their existing verified evidence path.
+      jawSensorInstalled: false,
+      movementSpeedThresholdMph: Number.isFinite(configured.movementSpeedThresholdMph)
+        ? configured.movementSpeedThresholdMph : MOVING_MPH,
+      engineOnRpmThreshold: ENGINE_RUNNING_RPM,
+      ignitionFreshnessMs: positive(
+        configured.ignitionFreshnessMs,
+        positive(configured.rpmFreshnessMs, DEFAULT_REPORT_FRESHNESS_MS)
+      ),
+      rpmFreshnessMs: positive(
+        configured.rpmFreshnessMs, DEFAULT_REPORT_FRESHNESS_MS
+      ),
+      speedFreshnessMs: positive(
+        configured.speedFreshnessMs, DEFAULT_REPORT_FRESHNESS_MS
+      ),
+      communicationFreshnessMs: positive(
+        configured.communicationFreshnessMs,
+        positive(communication.currentMs, DEFAULT_REPORT_FRESHNESS_MS)
+      )
+    };
+  }
+
+  function storedSamples(records, transform) {
+    return sorted(records).filter(function (record) {
+      return Boolean(recordId(record));
+    }).map(function (record) {
+      var value = transform(record);
+      return value === null || value === undefined
+        || typeof value === "number" && !Number.isFinite(value) ? null : {
+          timestamp: new Date(recordTime(record)).toISOString(),
+          value: value
+        };
+    }).filter(Boolean);
+  }
+
+  function continuousIgnitionSamples(ignitionRecords, evidenceRecords, freshnessMs) {
+    var events = storedSamples(ignitionRecords, function (record) {
       return booleanLevel(valueOf(record, "data", "Data"));
+    }).map(function (sample) {
+      return { timestamp: sample.timestamp, value: sample.value, ignition: true };
     });
-    if (capable) {
-      add(data.fifthWheel, "fifthWheel", function (record) {
-        return booleanLevel(valueOf(record, "data", "Data"));
-      });
-    }
+    storedSamples(evidenceRecords, function () { return true; }).forEach(function (sample) {
+      events.push({ timestamp: sample.timestamp, ignition: false });
+    });
     events.sort(function (left, right) {
-      return left.time - right.time || left.type.localeCompare(right.type);
+      return Date.parse(left.timestamp) - Date.parse(right.timestamp)
+        || Number(right.ignition) - Number(left.ignition);
     });
 
-    var current = { rpm: null, speed: null, ignition: null, fifthWheel: null };
+    var currentIgnition = null;
+    var lastEvidenceMs = null;
+    var samples = [];
+    events.forEach(function (event) {
+      var eventMs = Date.parse(event.timestamp);
+      if (lastEvidenceMs !== null && eventMs - lastEvidenceMs > freshnessMs) {
+        currentIgnition = null;
+      }
+      if (event.ignition) {
+        currentIgnition = event.value;
+      }
+      if (currentIgnition !== null) {
+        samples.push({ timestamp: event.timestamp, value: currentIgnition });
+      }
+      lastEvidenceMs = eventMs;
+    });
+    return samples;
+  }
+
+  function buildReportTimeline(device, data, window, options) {
+    var logRecords = data && data.speed || [];
+    var capability = reportCapability(device, options);
+    var storedEvidence = (data && data.rpm || []).concat(logRecords);
+    return timeline.buildOperationalTimeline({
+      capability: capability,
+      startUtc: window.startUtc,
+      endUtc: window.endUtc,
+      compactStates: true,
+      telemetry: {
+        // Ignition is a state-change diagnostic. Continuous stored RPM/LogRecord
+        // evidence reaffirms the last stored transition only while telemetry stays
+        // within the approved freshness window. A gap invalidates the latch and a
+        // later RPM sample cannot revive it without a new stored ignition record.
+        ignitionSamples: continuousIgnitionSamples(
+          data && data.ignition, storedEvidence, capability.ignitionFreshnessMs
+        ),
+        rpmSamples: storedSamples(data && data.rpm, recordData),
+        speedSamples: storedSamples(logRecords, speedMph),
+        jawSamples: [],
+        communicationSamples: storedSamples(
+          (data && data.ignition || []).concat(storedEvidence), function () { return true; }
+        )
+      }
+    });
+  }
+
+  function activityIntervals(operatingTimeline) {
+    var states = operationalStates.STATES;
+    var movingStates = new Set([
+      states.COUPLED_MOVING, states.BOBTAIL_MOVING, states.ENGINE_ON_MOVING
+    ]);
+    var stationaryStates = new Set([
+      states.COUPLED_IDLE, states.BOBTAIL_IDLE, states.ENGINE_ON_STATIONARY
+    ]);
+    return (operatingTimeline.intervals || []).map(function (interval) {
+      var moving = movingStates.has(interval.state);
+      var stationary = stationaryStates.has(interval.state);
+      return {
+        start: Date.parse(interval.startUtc),
+        end: Date.parse(interval.endUtc),
+        startUtc: interval.startUtc,
+        endUtc: interval.endUtc,
+        durationMinutes: interval.durationMs / 60000,
+        state: interval.state,
+        engineRunning: moving || stationary,
+        moving: moving,
+        stationary: stationary,
+        keyOn: interval.state === states.KEY_ON_ENGINE_NOT_RUNNING,
+        engineOff: interval.state === states.ENGINE_OFF,
+        unavailable: interval.state === states.UNKNOWN
+          || interval.state === states.NOT_COMMUNICATING,
+        speedMph: interval.speedMph
+      };
+    });
+  }
+
+  function couplingBuckets(capable, fifthWheelRecords, activity) {
+    var result = {
+      coupledMinutes: 0,
+      uncoupledMinutes: 0,
+      coupledMovingMinutes: 0,
+      uncoupledMovingMinutes: 0,
+      coupledDistanceMiles: 0,
+      uncoupledDistanceMiles: 0
+    };
+    if (!capable) {
+      return result;
+    }
+    var jaw = sorted(fifthWheelRecords).map(function (record) {
+      return {
+        time: recordTime(record),
+        value: booleanLevel(valueOf(record, "data", "Data"))
+      };
+    }).filter(function (record) { return record.value !== null; });
+    var jawIndex = 0;
+    var currentJaw = null;
+    function add(start, end, interval) {
+      if (currentJaw === null || end <= start) {
+        return;
+      }
+      var minutes = (end - start) / 60000;
+      var prefix = currentJaw ? "coupled" : "uncoupled";
+      result[prefix + "Minutes"] += minutes;
+      if (interval.moving) {
+        result[prefix + "MovingMinutes"] += minutes;
+        if (Number.isFinite(interval.speedMph)) {
+          result[prefix + "DistanceMiles"] += interval.speedMph * minutes / 60;
+        }
+      }
+    }
+    (activity || []).forEach(function (interval) {
+      while (jawIndex < jaw.length && jaw[jawIndex].time <= interval.start) {
+        currentJaw = jaw[jawIndex].value;
+        jawIndex += 1;
+      }
+      var cursor = interval.start;
+      while (jawIndex < jaw.length && jaw[jawIndex].time < interval.end) {
+        add(cursor, jaw[jawIndex].time, interval);
+        currentJaw = jaw[jawIndex].value;
+        cursor = jaw[jawIndex].time;
+        jawIndex += 1;
+      }
+      add(cursor, interval.end, interval);
+    });
+    return result;
+  }
+
+  function analyzeUnit(device, data, window, options) {
+    var capable = device.fifthWheelCapabilityGroupMember === true;
+    var operatingTimeline = buildReportTimeline(device, data, window, options);
+    var activity = activityIntervals(operatingTimeline);
     var buckets = {
       movingMinutes: 0,
       idleMinutes: 0,
@@ -400,27 +567,15 @@
       prolongedInactivityMinutes: 0
     };
     var inactivityRun = 0;
-    function classifyInterval(durationMinutes) {
-      if (durationMinutes <= 0) {
-        return;
-      }
-      var moving = current.speed !== null && current.speed >= MOVING_MPH;
-      var engineRunning = current.rpm !== null && current.rpm >= ENGINE_RUNNING_RPM;
-      if (moving) {
-        buckets.movingMinutes += durationMinutes;
-      } else if (engineRunning) {
-        buckets.idleMinutes += durationMinutes;
-      } else if (current.ignition === true) {
-        buckets.keyOnMinutes += durationMinutes;
-      } else if (current.ignition === false) {
-        buckets.engineOffMinutes += durationMinutes;
-      } else {
-        buckets.stoppedMinutes += durationMinutes;
-      }
-      if (engineRunning) {
-        buckets.engineRunningMinutes += durationMinutes;
-      }
-      if (!moving && !engineRunning) {
+    activity.forEach(function (interval) {
+      var durationMinutes = interval.durationMinutes;
+      buckets.movingMinutes += interval.moving ? durationMinutes : 0;
+      buckets.idleMinutes += interval.stationary ? durationMinutes : 0;
+      buckets.engineRunningMinutes += interval.engineRunning ? durationMinutes : 0;
+      buckets.keyOnMinutes += interval.keyOn ? durationMinutes : 0;
+      buckets.engineOffMinutes += interval.engineOff ? durationMinutes : 0;
+      buckets.stoppedMinutes += interval.unavailable ? durationMinutes : 0;
+      if (!interval.unavailable && !interval.moving && !interval.engineRunning) {
         inactivityRun += durationMinutes;
         buckets.prolongedInactivityMinutes = Math.max(
           buckets.prolongedInactivityMinutes, inactivityRun
@@ -428,41 +583,18 @@
       } else {
         inactivityRun = 0;
       }
-      if (capable && current.fifthWheel !== null) {
-        var durationHours = durationMinutes / 60;
-        var distance = moving && current.speed !== null
-          ? current.speed * durationHours : 0;
-        if (current.fifthWheel) {
-          buckets.coupledMinutes += durationMinutes;
-          if (moving) {
-            buckets.coupledMovingMinutes += durationMinutes;
-            buckets.coupledDistanceMiles += distance;
-          }
-        } else {
-          buckets.uncoupledMinutes += durationMinutes;
-          if (moving) {
-            buckets.uncoupledMovingMinutes += durationMinutes;
-            buckets.uncoupledDistanceMiles += distance;
-          }
-        }
-      }
-    }
-
-    var previousTime = startMs;
-    events.forEach(function (event) {
-      classifyInterval((event.time - previousTime) / 60000);
-      current[event.type] = event.value;
-      previousTime = event.time;
     });
-    classifyInterval((endMs - previousTime) / 60000);
+    Object.assign(buckets, couplingBuckets(capable, data.fifthWheel, activity));
 
     var fuelGallons = cumulativeDelta(data.fuel, LITERS_TO_GALLONS);
     var engineHours = engineHoursReport.cumulativeDeltaHours(data.engineHours);
     var averageGph = fuelGallons !== null && engineHours !== null && engineHours > 0
       ? fuelGallons / engineHours : null;
-    var idleFuelGallons = averageGph !== null
+    var allocationSupported = buckets.stoppedMinutes === 0;
+    var idleFuelGallons = allocationSupported && averageGph !== null
       ? Math.min(fuelGallons, averageGph * buckets.idleMinutes / 60) : null;
-    var productiveFuel = fuelGallons !== null && idleFuelGallons !== null
+    var productiveFuel = allocationSupported
+      && fuelGallons !== null && idleFuelGallons !== null
       ? Math.max(0, fuelGallons - idleFuelGallons) : null;
     var productiveHours = Math.max(
       0, buckets.engineRunningMinutes - buckets.idleMinutes
@@ -474,13 +606,12 @@
       return observation.mph > maximum.mph ? observation : maximum;
     }) : null;
     var maxSpeedMph = peakSpeed ? peakSpeed.mph : null;
-    var classifiedMinutes = buckets.movingMinutes + buckets.idleMinutes
-      + buckets.keyOnMinutes + buckets.engineOffMinutes + buckets.stoppedMinutes;
+    var classifiedMinutes = Math.max(0, window.durationMinutes - buckets.stoppedMinutes);
     var moveRecords = capable
       ? verifiedMoveRecords(data.fifthWheel, data.speed) : null;
     var moves = moveRecords === null ? null : moveRecords.length;
 
-    return Object.assign({
+    var unit = Object.assign({
       deviceId: device.deviceId,
       displayName: device.displayName,
       fifthWheelCapable: capable,
@@ -496,6 +627,7 @@
       engineHoursDelta: engineHours,
       idleFuelGallons: idleFuelGallons,
       idleFuelEstimated: idleFuelGallons !== null,
+      fuelAllocationSupported: allocationSupported,
       productiveFuelGallons: productiveFuel,
       gallonsPerProductiveHour: productiveFuel !== null && productiveHours > 0
         ? productiveFuel / productiveHours : null,
@@ -511,6 +643,15 @@
       offMinutes: buckets.keyOnMinutes + buckets.engineOffMinutes,
       unavailableMinutes: buckets.stoppedMinutes
     });
+    Object.defineProperty(unit, "operatingTimeline", {
+      value: operatingTimeline,
+      enumerable: false
+    });
+    Object.defineProperty(unit, "operatingIntervals", {
+      value: activity,
+      enumerable: false
+    });
+    return unit;
   }
 
   function sum(units, key) {
@@ -575,10 +716,15 @@
     LITERS_TO_GALLONS: LITERS_TO_GALLONS,
     MOVING_MPH: MOVING_MPH,
     PARKED_COMMUNICATION_MAX_GAP_HOURS: PARKED_COMMUNICATION_MAX_GAP_HOURS,
+    DEFAULT_REPORT_FRESHNESS_MS: DEFAULT_REPORT_FRESHNESS_MS,
+    activityIntervals: activityIntervals,
     analyzeUnit: analyzeUnit,
+    buildReportTimeline: buildReportTimeline,
+    continuousIgnitionSamples: continuousIgnitionSamples,
     countVerifiedMoves: countVerifiedMoves,
     cumulativeDelta: cumulativeDelta,
     facilitySummary: facilitySummary,
+    reportCapability: reportCapability,
     zeroEngineOperationEvidence: zeroEngineOperationEvidence,
     verifiedMoveRecords: verifiedMoveRecords,
     resolveWindow: resolveWindow

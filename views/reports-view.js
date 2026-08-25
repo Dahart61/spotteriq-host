@@ -256,7 +256,7 @@
         ];
       });
       var driverHeaders = [
-        "Driver", "Assigned Time", "Verified Moves", "Moves per Assigned Hour",
+        "Driver", "Time on Truck", "Verified Moves", "Moves / Truck Hour",
         "Engine Running", "Moving", "Engine Running Stationary", "Utilization",
         "Max Observed Speed", "Trucks Operated"
       ];
@@ -639,9 +639,9 @@
         return empty("No historically attributed drivers in this reporting window.");
       }
       var headers = [
-        { label: "Driver" }, { label: "Assigned Time", numeric: true },
+        { label: "Driver" }, { label: "Time on Truck", numeric: true },
         { label: "Verified Moves", numeric: true },
-        { label: "Moves / Assigned Hour", numeric: true },
+        { label: "Moves / Truck Hour", numeric: true },
         { label: "Moving", numeric: true },
         { label: "Utilization", numeric: true },
         { label: "Max Observed Speed", numeric: true }
@@ -655,9 +655,9 @@
         var content = element("div", "siq-report-detail-sections");
         content.append(
           detailGroup("Productivity", [
-            ["Assigned Time", duration(driver.assignedMinutes)],
+            ["Time on Truck", duration(driver.assignedMinutes)],
             ["Verified Moves", String(driver.verifiedMoves)],
-            ["Moves / Assigned Hour", decimal(driver.movesPerAssignedHour)],
+            ["Moves / Truck Hour", decimal(driver.movesPerAssignedHour)],
             ["Moves / Engine-Running Hour", decimal(driver.movesPerEngineRunningHour)],
             ["Moving Time", duration(driver.movingMinutes)],
             ["Utilization", percent(driver.utilizationPercent)]
@@ -685,7 +685,7 @@
           content.appendChild(element("h4", "siq-report-detail-table-title",
             "Trucks Operated"));
           content.appendChild(table([
-            { label: "Unit" }, { label: "Assigned Time", numeric: true },
+            { label: "Unit" }, { label: "Time on Truck", numeric: true },
             { label: "Moving", numeric: true },
             { label: "Verified Moves", numeric: true }
           ], driver.trucks.map(function (truck) {
@@ -749,7 +749,7 @@
           content.appendChild(element("h4", "siq-report-detail-table-title",
             "Drivers"));
           content.appendChild(table([
-            { label: "Driver" }, { label: "Assigned Time", numeric: true },
+            { label: "Driver" }, { label: "Time on Truck", numeric: true },
             { label: "Moving", numeric: true },
             { label: "Verified Moves", numeric: true }
           ], truck.drivers.map(function (driver) {

@@ -17,8 +17,6 @@
   "use strict";
 
   var KPH_TO_MPH = 0.621371;
-  var MOVING_MPH = 2;
-  var ENGINE_RUNNING_RPM = 400;
 
   function rawValue(record, lower, upper) {
     return record && Object.prototype.hasOwnProperty.call(record, lower)
@@ -98,48 +96,19 @@
     return last && instant === Date.parse(last.endUtc) ? last : null;
   }
 
-  function activityIntervals(data, window) {
-    var start = Date.parse(window.startUtc);
-    var end = Date.parse(window.endUtc);
-    var events = [];
-    function add(records, type, transform) {
-      sorted(records).forEach(function (record) {
-        var instant = recordTime(record);
-        var value = transform(record);
-        if (start <= instant && instant < end && value !== null) {
-          events.push({ instant: instant, type: type, value: value });
-        }
-      });
+  function activityIntervals(unit) {
+    if (!unit || !Array.isArray(unit.operatingIntervals)) {
+      throw new TypeError("Canonical operating intervals are required");
     }
-    add(data && data.rpm, "rpm", recordData);
-    add(data && data.speed, "speed", speedMph);
-    events.sort(function (left, right) {
-      return left.instant - right.instant || left.type.localeCompare(right.type);
+    return unit.operatingIntervals.map(function (interval) {
+      return {
+        start: interval.start,
+        end: interval.end,
+        engineRunning: interval.engineRunning,
+        moving: interval.moving,
+        unavailable: interval.unavailable === true
+      };
     });
-    var state = { rpm: null, speed: null };
-    var cursor = start;
-    var intervals = [];
-    events.forEach(function (event) {
-      if (event.instant > cursor) {
-        intervals.push({
-          start: cursor,
-          end: event.instant,
-          engineRunning: state.rpm !== null && state.rpm >= ENGINE_RUNNING_RPM,
-          moving: state.speed !== null && state.speed >= MOVING_MPH
-        });
-      }
-      state[event.type] = event.value;
-      cursor = event.instant;
-    });
-    if (cursor < end) {
-      intervals.push({
-        start: cursor,
-        end: end,
-        engineRunning: state.rpm !== null && state.rpm >= ENGINE_RUNNING_RPM,
-        moving: state.speed !== null && state.speed >= MOVING_MPH
-      });
-    }
-    return intervals;
   }
 
   function attributedActivity(activity, driverSegments) {
@@ -371,7 +340,7 @@
         return;
       }
       var segments = timelineFor(device, data, window);
-      var attributed = attributedActivity(activityIntervals(data, window), segments);
+      var attributed = attributedActivity(activityIntervals(unit), segments);
       var truck = truckAccumulator(device, unit, segments);
       attributionSegments = attributionSegments.concat(segments);
 

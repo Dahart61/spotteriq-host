@@ -76,11 +76,17 @@
 
   function effectiveSignal(records, atMilliseconds, freshnessMilliseconds) {
     var effective = null;
-    records.forEach(function (record) {
-      if (record.effectiveTimestampMs <= atMilliseconds) {
-        effective = record;
+    var low = 0;
+    var high = records.length - 1;
+    while (low <= high) {
+      var midpoint = low + Math.floor((high - low) / 2);
+      if (records[midpoint].effectiveTimestampMs <= atMilliseconds) {
+        effective = records[midpoint];
+        low = midpoint + 1;
+      } else {
+        high = midpoint - 1;
       }
-    });
+    }
     if (!effective) {
       return {
         value: null,
@@ -217,7 +223,17 @@
     };
   }
 
-  function intervalSignature(interval) {
+  function intervalSignature(interval, compactStates) {
+    if (compactStates === true) {
+      return JSON.stringify({
+        state: interval.state,
+        reasonCode: interval.reasonCode,
+        speedMph: /_MOVING$/.test(interval.state) ? interval.speedMph : null,
+        availability: interval.availability,
+        freshness: interval.freshness,
+        communicationCondition: interval.communicationCondition
+      });
+    }
     return JSON.stringify({
       state: interval.state,
       reason: interval.reason,
@@ -232,26 +248,40 @@
     });
   }
 
-  function mergeAdjacentIntervals(intervals) {
+  function appendMergedInterval(merged, interval, compactStates) {
+    if (interval.durationMs <= 0) {
+      return;
+    }
+    var prior = merged[merged.length - 1];
+    if (prior
+      && prior.endUtc === interval.startUtc
+      && intervalSignature(prior, compactStates)
+        === intervalSignature(interval, compactStates)) {
+      prior.endUtc = interval.endUtc;
+      prior.durationMs += interval.durationMs;
+      Object.keys(prior.sourceTimestamps).forEach(function (channel) {
+        if (prior.sourceTimestamps[channel] !== interval.sourceTimestamps[channel]) {
+          prior.sourceTimestamps[channel] = null;
+        }
+      });
+      if (compactStates === true) {
+        prior.ignitionOn = prior.ignitionOn === interval.ignitionOn
+          ? prior.ignitionOn : null;
+        prior.rpm = prior.rpm === interval.rpm ? prior.rpm : null;
+        prior.speedMph = prior.speedMph === interval.speedMph
+          ? prior.speedMph : null;
+        prior.jawLocked = prior.jawLocked === interval.jawLocked
+          ? prior.jawLocked : null;
+      }
+      return;
+    }
+    merged.push(Object.assign({}, interval));
+  }
+
+  function mergeAdjacentIntervals(intervals, compactStates) {
     var merged = [];
     (intervals || []).forEach(function (interval) {
-      if (interval.durationMs <= 0) {
-        return;
-      }
-      var prior = merged[merged.length - 1];
-      if (prior
-        && prior.endUtc === interval.startUtc
-        && intervalSignature(prior) === intervalSignature(interval)) {
-        prior.endUtc = interval.endUtc;
-        prior.durationMs += interval.durationMs;
-        Object.keys(prior.sourceTimestamps).forEach(function (channel) {
-          if (prior.sourceTimestamps[channel] !== interval.sourceTimestamps[channel]) {
-            prior.sourceTimestamps[channel] = null;
-          }
-        });
-      } else {
-        merged.push(Object.assign({}, interval));
-      }
+      appendMergedInterval(merged, interval, compactStates);
     });
     return merged;
   }
@@ -382,7 +412,7 @@
       startMilliseconds,
       endMilliseconds
     );
-    var rawIntervals = [];
+    var intervals = [];
     for (var index = 0; index < boundaries.length - 1; index += 1) {
       var intervalStart = boundaries[index];
       var intervalEnd = boundaries[index + 1];
@@ -391,15 +421,14 @@
       }
       var signals = signalSnapshot(channelRecords, capability, intervalStart);
       var classification = operationalStates.classifyOperationalState(capability, signals);
-      rawIntervals.push(intervalFromClassification(
+      appendMergedInterval(intervals, intervalFromClassification(
         capability,
         intervalStart,
         intervalEnd,
         signals,
         classification
-      ));
+      ), request.compactStates === true);
     }
-    var intervals = mergeAdjacentIntervals(rawIntervals);
     return {
       deviceId: capability.deviceId,
       startUtc: new Date(startMilliseconds).toISOString(),
