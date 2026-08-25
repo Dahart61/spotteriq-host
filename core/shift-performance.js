@@ -446,24 +446,35 @@
     return samples;
   }
 
+  function rpmOnlyIgnitionSamples(rpmRecords, threshold) {
+    return storedSamples(rpmRecords, function (record) {
+      return recordData(record) >= threshold;
+    });
+  }
+
   function buildReportTimeline(device, data, window, options) {
     var logRecords = data && data.speed || [];
     var capability = reportCapability(device, options);
     var storedEvidence = (data && data.rpm || []).concat(logRecords);
+    var nativeIgnition = storedSamples(data && data.ignition, function (record) {
+      return booleanLevel(valueOf(record, "data", "Data"));
+    });
+    capability.historicalIgnitionAuthority = nativeIgnition.length > 0;
     return timeline.buildOperationalTimeline({
       capability: capability,
       startUtc: window.startUtc,
       endUtc: window.endUtc,
       compactStates: true,
       telemetry: {
-        // Ignition is a latched historical transition. Stored RPM/LogRecord
-        // evidence carries that latch across ordinary sampling gaps. Only the
-        // shared historical-continuity boundary clears it; the timeline still
-        // applies independent 120-second RPM, ignition, and communication
-        // freshness while classifying each interval.
-        ignitionSamples: historicalIgnitionSamples(
-          data && data.ignition, storedEvidence, HISTORICAL_CONTINUITY_MAX_GAP_MS
-        ),
+        // Stored native ignition is the historical engine authority. RPM and
+        // LogRecord evidence reaffirm its continuity without making fresh RPM
+        // mandatory. Assets with no stored ignition transitions use a separate
+        // RPM-derived ignition path that still expires with RPM freshness.
+        ignitionSamples: capability.historicalIgnitionAuthority
+          ? historicalIgnitionSamples(
+            data && data.ignition, storedEvidence, HISTORICAL_CONTINUITY_MAX_GAP_MS
+          )
+          : rpmOnlyIgnitionSamples(data && data.rpm, capability.engineOnRpmThreshold),
         rpmSamples: storedSamples(data && data.rpm, recordData),
         speedSamples: storedSamples(logRecords, speedMph),
         jawSamples: [],
@@ -732,6 +743,7 @@
     buildReportTimeline: buildReportTimeline,
     continuousIgnitionSamples: historicalIgnitionSamples,
     historicalIgnitionSamples: historicalIgnitionSamples,
+    rpmOnlyIgnitionSamples: rpmOnlyIgnitionSamples,
     countVerifiedMoves: countVerifiedMoves,
     cumulativeDelta: cumulativeDelta,
     facilitySummary: facilitySummary,

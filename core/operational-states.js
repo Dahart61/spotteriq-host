@@ -58,35 +58,53 @@
       };
     }
 
-    if (!signals.rpm.fresh) {
-      return {
-        state: STATES.UNKNOWN,
-        reason: "Fresh RPM is unavailable; missing RPM is not treated as engine off",
-        reasonCode: unavailableReason("rpm", signals.rpm.status)
-      };
-    }
-
-    var rpmRunning = signals.rpm.value >= capability.engineOnRpmThreshold;
-    if (signals.ignition.value === true && !rpmRunning) {
-      return {
-        state: STATES.KEY_ON_ENGINE_NOT_RUNNING,
-        reason: "Ignition is on, but fresh RPM is below the configured engine-running threshold",
-        reasonCode: "IGNITION_ON_RPM_BELOW_ENGINE_RUNNING_THRESHOLD"
-      };
-    }
-    if (signals.ignition.value === false && !rpmRunning) {
-      return {
-        state: STATES.ENGINE_OFF,
-        reason: "Ignition is off and fresh RPM is below the configured engine-running threshold",
-        reasonCode: "IGNITION_OFF_RPM_BELOW_ENGINE_RUNNING_THRESHOLD"
-      };
-    }
+    var historicalIgnitionAuthority = capability.historicalIgnitionAuthority === true;
+    var rpmRunning = signals.rpm.fresh
+      && signals.rpm.value >= capability.engineOnRpmThreshold;
     if (signals.ignition.value === false && rpmRunning) {
       return {
         state: STATES.UNKNOWN,
         reason: "Conflicting ignition and RPM evidence: ignition is off while RPM meets the engine-running threshold",
         reasonCode: "IGNITION_RPM_CONFLICT"
       };
+    }
+    if (historicalIgnitionAuthority) {
+      if (signals.ignition.value === false) {
+        return {
+          state: STATES.ENGINE_OFF,
+          reason: "Stored historical ignition is off",
+          reasonCode: "HISTORICAL_IGNITION_OFF"
+        };
+      }
+      if (signals.rpm.fresh && !rpmRunning) {
+        return {
+          state: STATES.KEY_ON_ENGINE_NOT_RUNNING,
+          reason: "Stored historical ignition is on, but fresh RPM establishes an engine-stop condition",
+          reasonCode: "HISTORICAL_IGNITION_ON_RPM_STOP"
+        };
+      }
+    } else {
+      if (!signals.rpm.fresh) {
+        return {
+          state: STATES.UNKNOWN,
+          reason: "Fresh RPM is unavailable; missing RPM is not treated as engine off",
+          reasonCode: unavailableReason("rpm", signals.rpm.status)
+        };
+      }
+      if (signals.ignition.value === true && !rpmRunning) {
+        return {
+          state: STATES.KEY_ON_ENGINE_NOT_RUNNING,
+          reason: "Ignition is on, but fresh RPM is below the configured engine-running threshold",
+          reasonCode: "IGNITION_ON_RPM_BELOW_ENGINE_RUNNING_THRESHOLD"
+        };
+      }
+      if (signals.ignition.value === false && !rpmRunning) {
+        return {
+          state: STATES.ENGINE_OFF,
+          reason: "Ignition is off and fresh RPM is below the configured engine-running threshold",
+          reasonCode: "IGNITION_OFF_RPM_BELOW_ENGINE_RUNNING_THRESHOLD"
+        };
+      }
     }
 
     if (!signals.speed.fresh) {
@@ -101,9 +119,13 @@
     if (!capability.jawSensorInstalled) {
       return {
         state: moving ? STATES.ENGINE_ON_MOVING : STATES.ENGINE_ON_STATIONARY,
-        reason: moving
-          ? "Fresh Ignition and RPM prove Engine Running, and speed is above the movement threshold"
-          : "Fresh Ignition and RPM prove Engine Running, and speed is at or below the movement threshold",
+        reason: historicalIgnitionAuthority
+          ? moving
+            ? "Stored historical ignition proves Engine Running, and speed is above the movement threshold"
+            : "Stored historical ignition proves Engine Running, and speed is at or below the movement threshold"
+          : moving
+            ? "Fresh Ignition and RPM prove Engine Running, and speed is above the movement threshold"
+            : "Fresh Ignition and RPM prove Engine Running, and speed is at or below the movement threshold",
         reasonCode: moving ? "NO_JAW_ENGINE_ON_MOVING" : "NO_JAW_ENGINE_ON_STATIONARY"
       };
     }
