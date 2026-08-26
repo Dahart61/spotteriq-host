@@ -603,7 +603,9 @@
     var jawIndex = 0;
     var currentJaw = null;
     function add(start, end, interval) {
-      if (currentJaw === null || end <= start) {
+      // Customer-facing trailer durations describe operating time, not the
+      // wall-clock lifetime of the last trustworthy Fifth Wheel observation.
+      if (currentJaw === null || !interval.engineRunning || end <= start) {
         return;
       }
       var minutes = (end - start) / 60000;
