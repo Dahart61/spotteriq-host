@@ -9,7 +9,11 @@
     ? require("./mygeotab-driver-events") : root.SIQ_MYGEOTAB_DRIVER_EVENTS;
   var managementReports = typeof module === "object" && module.exports
     ? require("../core/management-reports") : root.SIQ_MANAGEMENT_REPORTS;
-  var api = factory(client, shiftPerformance, driverEvents, managementReports);
+  var engineHoursReport = typeof module === "object" && module.exports
+    ? require("../core/engine-hours-report") : root.SIQ_ENGINE_HOURS_REPORT;
+  var api = factory(
+    client, shiftPerformance, driverEvents, managementReports, engineHoursReport
+  );
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   }
@@ -18,7 +22,8 @@
   client,
   shiftPerformance,
   driverEvents,
-  managementReports
+  managementReports,
+  engineHoursReport
 ) {
   "use strict";
 
@@ -50,7 +55,7 @@
       "fifthWheel", "speed", "driverEvents"
     ]),
     engineHours: Object.freeze([
-      "engineHours"
+      "calculatedEngineHours"
     ]),
     moves: Object.freeze(["fifthWheel", "speed", "driverEvents"]),
     speed: Object.freeze(["speed", "driverEvents"])
@@ -86,6 +91,19 @@
         sortBy: "date",
         sortDirection: "asc"
       }
+    }];
+  }
+
+  function calculatedEngineHoursPointCall(deviceId, exactUtc) {
+    return ["Get", {
+      typeName: "StatusData",
+      search: {
+        deviceSearch: { id: deviceId },
+        diagnosticSearch: { id: DIAGNOSTICS.engineHoursAdjustment },
+        fromDate: exactUtc,
+        toDate: exactUtc
+      },
+      resultsLimit: RESULT_LIMIT
     }];
   }
 
@@ -162,8 +180,8 @@
   function withTimeout(promise, timeoutMs) {
     return new Promise(function (resolve, reject) {
       var timer = setTimeout(function () {
-        var error = new Error("Optional engine-hours adjustment query timed out");
-        error.code = "ENGINE_HOURS_ADJUSTMENT_TIMEOUT";
+        var error = new Error("Engine-hours meter query timed out");
+        error.code = "ENGINE_HOURS_QUERY_TIMEOUT";
         reject(error);
       }, timeoutMs);
       promise.then(function (value) {
@@ -216,6 +234,23 @@
     var specs = [];
     var sources = reportType && REPORT_SOURCE_PLANS[reportType]
       ? REPORT_SOURCE_PLANS[reportType] : null;
+    if (reportType === "engineHours") {
+      (devices || []).forEach(function (device) {
+        [
+          { source: "calculatedEngineHoursBegin", exactUtc: window.startUtc },
+          { source: "calculatedEngineHoursEnd", exactUtc: window.endUtc }
+        ].forEach(function (boundary) {
+          specs.push({
+            deviceId: device.deviceId,
+            source: boundary.source,
+            startUtc: boundary.exactUtc,
+            endUtc: boundary.exactUtc,
+            call: calculatedEngineHoursPointCall(device.deviceId, boundary.exactUtc)
+          });
+        });
+      });
+      return specs;
+    }
     function required(source) {
       return !sources || sources.indexOf(source) !== -1;
     }
@@ -347,6 +382,68 @@
       }
     }, options);
     return records.map(dedupe);
+  }
+
+  async function fetchCalculatedEngineHours(api, devices, window, options) {
+    options = options || {};
+    var specs = querySpecs(devices, window, "engineHours");
+    var timeoutMs = options && Number.isFinite(options.meterTimeoutMs)
+      && options.meterTimeoutMs > 0 ? options.meterTimeoutMs : ADJUSTMENT_TIMEOUT_MS;
+    var complete = await mapBounded(
+      specs,
+      options.maxConcurrency || DEFAULT_REPORT_CONCURRENCY,
+      async function (spec) {
+        assertCurrent(options);
+        if (options.stats) { options.stats.apiCalls += 1; }
+        try {
+          var records = await withTimeout(
+            client.call(api, spec.call[0], spec.call[1]), timeoutMs
+          );
+          assertCurrent(options);
+          if (options.stats) {
+            options.stats.maxRecordsPerCall = Math.max(
+              options.stats.maxRecordsPerCall, records.length
+            );
+            options.stats.maxRawCollection = Math.max(
+              options.stats.maxRawCollection, records.length
+            );
+          }
+          return authorizedRecords(records, spec.deviceId);
+        } catch (error) {
+          if (error && error.code === "REPORT_REQUEST_STALE") { throw error; }
+          return [];
+        }
+      },
+      options
+    );
+    var byDevice = new Map((devices || []).map(function (device) {
+      return [device.deviceId, {
+        calculatedEngineHoursBegin: [],
+        calculatedEngineHoursEnd: []
+      }];
+    }));
+    specs.forEach(function (spec, index) {
+      byDevice.get(spec.deviceId)[spec.source] = complete[index];
+    });
+    assertCurrent(options);
+    var report = engineHoursReport.buildCalculated(devices, byDevice, window);
+    return {
+      ok: true,
+      window: window,
+      units: [],
+      summary: {},
+      reports: { engineHours: report },
+      loadMetrics: Object.assign({}, options.stats),
+      requests: specs.map(function (spec) {
+        return {
+          typeName: spec.call[1].typeName,
+          deviceId: spec.deviceId,
+          source: spec.source,
+          startUtc: spec.startUtc,
+          endUtc: spec.endUtc
+        };
+      })
+    };
   }
 
   function exactValid(records, exactUtc) {
@@ -566,6 +663,9 @@
       };
     }
     assertCurrent(options);
+    if (reportType === "engineHours") {
+      return fetchCalculatedEngineHours(api, devices, window, options);
+    }
     var specs = querySpecs(devices, window, reportType);
     var requiredSpecs = specs.filter(function (spec) {
       return spec.source !== "engineHoursAdjustment";
@@ -724,9 +824,11 @@
     REPORT_HISTORY_LOOKBACK_MS: REPORT_HISTORY_LOOKBACK_MS,
     REPORT_STATE_LOOKBACK_MS: REPORT_STATE_LOOKBACK_MS,
     authorizedRecords: authorizedRecords,
+    calculatedEngineHoursPointCall: calculatedEngineHoursPointCall,
     dedupe: dedupe,
     fetchSpecsBounded: fetchSpecsBounded,
     fetchComplete: fetchComplete,
+    fetchCalculatedEngineHours: fetchCalculatedEngineHours,
     fetchShift: fetchShift,
     hydrateEngineHoursCarryForward: hydrateEngineHoursCarryForward,
     latestStoredEngineHoursCall: latestStoredEngineHoursCall,

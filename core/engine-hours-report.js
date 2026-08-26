@@ -84,6 +84,34 @@
     };
   }
 
+  function calculatedBoundary(records, exactUtc) {
+    var expected = Date.parse(exactUtc);
+    var candidates = Array.isArray(records) ? records : [];
+    if (!candidates.length) {
+      return { ok: false, reasonCode: "BOUNDARY_MISSING" };
+    }
+    if (candidates.length !== 1) {
+      return { ok: false, reasonCode: "BOUNDARY_CONFLICT" };
+    }
+    var record = candidates[0];
+    if (recordTime(record) !== expected) {
+      return { ok: false, reasonCode: "BOUNDARY_MISSING" };
+    }
+    var value = recordData(record);
+    var hours = secondsToHours(value);
+    if (!Number.isFinite(value) || value < 0 || hours === null) {
+      return { ok: false, reasonCode: "BOUNDARY_MALFORMED" };
+    }
+    return {
+      ok: true,
+      timestamp: new Date(expected).toISOString(),
+      rawSeconds: value,
+      hours: hours,
+      source: "CALCULATED",
+      provenance: "MYGEOTAB_CALCULATED_ENGINE_HOURS"
+    };
+  }
+
   function latestStoredReading(data, endUtc) {
     var end = Date.parse(endUtc);
     var supplemental = data && data.engineHoursCarryForward
@@ -301,10 +329,66 @@
     };
   }
 
+  function calculatedUnitReport(device, data, window) {
+    var begin = calculatedBoundary(
+      data && data.calculatedEngineHoursBegin, window.startUtc
+    );
+    var end = calculatedBoundary(
+      data && data.calculatedEngineHoursEnd, window.endUtc
+    );
+    var reasonCode = !begin.ok ? begin.reasonCode : !end.ok ? end.reasonCode : null;
+    if (!reasonCode && end.rawSeconds < begin.rawSeconds) {
+      reasonCode = "COUNTER_DECREASED";
+    }
+    var hoursUsed = reasonCode ? null : end.hours - begin.hours;
+    return {
+      deviceId: device.deviceId,
+      displayName: device.displayName,
+      status: !reasonCode ? "AVAILABLE"
+        : REVIEW_REASONS.indexOf(reasonCode) !== -1 ? "REVIEW_REQUIRED" : "UNAVAILABLE",
+      reasonCode: reasonCode,
+      reason: reasonCode ? REASONS[reasonCode] : null,
+      begin: begin.ok ? begin : null,
+      end: end.ok ? end : null,
+      hoursUsed: Number.isFinite(hoursUsed) && hoursUsed >= 0 ? hoursUsed : null,
+      meterSource: "MyGeotab Calculated Engine Hours"
+    };
+  }
+
+  function buildCalculated(devices, byDevice, window) {
+    var rows = (devices || []).map(function (device) {
+      return calculatedUnitReport(
+        device, byDevice.get(device.deviceId) || {}, window
+      );
+    }).sort(function (left, right) {
+      return left.displayName.localeCompare(right.displayName);
+    });
+    var valid = rows.filter(function (row) { return Number.isFinite(row.hoursUsed); });
+    var review = rows.filter(function (row) { return row.status === "REVIEW_REQUIRED"; });
+    return {
+      definitionVersion: 2,
+      meterAuthority: "MYGEOTAB_CALCULATED_ENGINE_HOURS",
+      rows: rows,
+      summary: {
+        totalUnits: rows.length,
+        reportingUnits: valid.length,
+        notReportedUnits: rows.length - valid.length,
+        validHoursTotal: valid.length ? valid.reduce(function (total, row) {
+          return total + row.hoursUsed;
+        }, 0) : null,
+        unavailableUnits: rows.length - valid.length - review.length,
+        reviewUnits: review.length
+      }
+    };
+  }
+
   return {
     REASONS: REASONS,
     adjustmentEvidence: adjustmentEvidence,
     build: build,
+    buildCalculated: buildCalculated,
+    calculatedBoundary: calculatedBoundary,
+    calculatedUnitReport: calculatedUnitReport,
     cumulativeDeltaHours: cumulativeDeltaHours,
     exactBoundary: exactBoundary,
     latestStoredReading: latestStoredReading,
