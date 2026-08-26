@@ -11,6 +11,7 @@
 
   var ENGINE_HEALTH_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
   var ACTIVE_OPERATIONS_REFRESH_INTERVAL_MS = 5000;
+  var OPERATIONS_MOVE_REFRESH_INTERVAL_MS = 30000;
 
   function defaultClock() {
     return {
@@ -65,6 +66,7 @@
       timerId: null,
       inFlight: null,
       inFlightGeneration: null,
+      moveInFlight: null,
       pendingInitial: false,
       pendingRefresh: false,
       selectedDeviceId: null,
@@ -78,7 +80,8 @@
       laneLastAt: {
         operational: null,
         fuelDef: null,
-        engineHours: null
+        engineHours: null,
+        moves: null
       }
     };
 
@@ -189,6 +192,51 @@
       });
       state.healthInFlight = request;
       state.healthRequestDeviceId = deviceId;
+      return request;
+    }
+
+    function runMoveRefresh(force, rebuild) {
+      if (!state.active || !state.visible || !state.loadedScopeKey
+        || !state.pollingEnabled
+        || typeof dataSource.refreshMoves !== "function") {
+        return Promise.resolve(null);
+      }
+      if (state.moveInFlight) {
+        return state.moveInFlight;
+      }
+      if (!force && state.laneLastAt.moves !== null
+        && clock.now() - state.laneLastAt.moves
+          < OPERATIONS_MOVE_REFRESH_INTERVAL_MS) {
+        return Promise.resolve(null);
+      }
+      var generation = state.generation;
+      var loadedScopeKey = state.loadedScopeKey;
+      var request = Promise.resolve().then(function () {
+        return dataSource.refreshMoves(currentRequestContext(), {
+          rebuild: rebuild === true
+        });
+      }).then(function (result) {
+        if (!result || !result.ok || !state.active
+          || generation !== state.generation
+          || loadedScopeKey !== state.loadedScopeKey) {
+          return result;
+        }
+        state.laneLastAt.moves = clock.now();
+        view.patchRows(result.viewModels || []);
+        return result;
+      }).catch(function (error) {
+        if (generation === state.generation && state.active) {
+          logger.error("Operations move refresh failure", {
+            category: runtimeFailureCategory(error)
+          });
+        }
+        return null;
+      }).finally(function () {
+        if (state.moveInFlight === request) {
+          state.moveInFlight = null;
+        }
+      });
+      state.moveInFlight = request;
       return request;
     }
 
@@ -309,6 +357,8 @@
             state.laneLastAt.operational = now;
             state.laneLastAt.fuelDef = now;
             state.laneLastAt.engineHours = now;
+            state.laneLastAt.moves = null;
+            runMoveRefresh(true, true);
           }
           return result;
         })
@@ -375,6 +425,9 @@
               state.laneLastAt[lane] = clock.now();
             }
           }
+          if (typeof dataSource.refreshMoves === "function") {
+            await runMoveRefresh(manual === true, false);
+          }
           if (generation === state.generation && state.active) {
             state.failureLevel = Math.max(0, state.failureLevel - 1);
             logger.info("refresh success", { lanes: lanes.slice() });
@@ -433,6 +486,7 @@
       state.requestedScopeKey = nextScopeKey;
       if (scopeChanged || !state.loadedScopeKey) {
         state.generation += 1;
+        state.moveInFlight = null;
         state.healthGeneration += 1;
         state.healthInFlight = null;
         state.healthRequestDeviceId = null;
@@ -462,6 +516,19 @@
       }
     }
 
+    function clearScope() {
+      blur();
+      state.requestedScopeKey = null;
+      state.loadedScopeKey = null;
+      state.context = null;
+      state.pollingEnabled = false;
+      state.moveInFlight = null;
+      state.laneLastAt.moves = null;
+      if (typeof dataSource.clear === "function") {
+        dataSource.clear();
+      }
+    }
+
     function setVisible(visible) {
       state.visible = Boolean(visible);
       if (!state.visible) {
@@ -479,6 +546,7 @@
 
     return {
       blur: blur,
+      clearScope: clearScope,
       focus: focus,
       reloadScope: function () {
         state.generation += 1;
@@ -514,6 +582,7 @@
   return {
     ACTIVE_OPERATIONS_REFRESH_INTERVAL_MS: ACTIVE_OPERATIONS_REFRESH_INTERVAL_MS,
     ENGINE_HEALTH_REFRESH_INTERVAL_MS: ENGINE_HEALTH_REFRESH_INTERVAL_MS,
+    OPERATIONS_MOVE_REFRESH_INTERVAL_MS: OPERATIONS_MOVE_REFRESH_INTERVAL_MS,
     createOperationsController: createOperationsController
   };
 }));

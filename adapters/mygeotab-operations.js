@@ -16,6 +16,9 @@
   var shifts = typeof module === "object" && module.exports
     ? require("../core/shifts")
     : root.SIQ_SHIFTS;
+  var shiftPerformance = typeof module === "object" && module.exports
+    ? require("../core/shift-performance")
+    : root.SIQ_SHIFT_PERFORMANCE;
   var timeline = typeof module === "object" && module.exports
     ? require("../core/timeline")
     : root.SIQ_TIMELINE;
@@ -37,7 +40,8 @@
   var powertrainFaults = typeof module === "object" && module.exports
     ? require("../core/powertrain-faults")
     : root.SIQ_POWERTRAIN_FAULTS;
-  var api = factory(client, normalization, diagnostics, timezone, shifts, timeline,
+  var api = factory(client, normalization, diagnostics, timezone, shifts,
+    shiftPerformance, timeline,
     moves, moveSummaries, driverEvents, driverAttribution, mygeotabFaults,
     powertrainFaults);
   if (typeof module === "object" && module.exports) {
@@ -50,6 +54,7 @@
   diagnostics,
   timezone,
   shifts,
+  shiftPerformance,
   timeline,
   moves,
   moveSummaries,
@@ -88,6 +93,8 @@
   var DEFAULT_MOVEMENT_THRESHOLD_MPH = 2;
   var DEFAULT_SIGNAL_FRESHNESS_MS = 120000;
   var SPOTTERIQ_COMMUNICATION_RETENTION_MS = 72 * 60 * 60 * 1000;
+  var OPERATIONS_MOVE_RESULT_LIMIT = 50000;
+  var OPERATIONS_MOVE_DIAGNOSTIC_ID = "DiagnosticAux1Id";
   var STATE_LABELS = Object.freeze({
     COUPLED_MOVING: "Coupled Moving",
     BOBTAIL_MOVING: "Bobtail Moving",
@@ -194,6 +201,118 @@
       return record.channel === channel;
     });
     return matching.length ? matching[matching.length - 1] : null;
+  }
+
+  function operationsMoveWindow(facility, instant) {
+    var nowMs = instant instanceof Date ? instant.getTime() : Number(instant);
+    if (!Number.isFinite(nowMs)) {
+      nowMs = Date.now();
+    }
+    var localDate = localDateAt(nowMs, facility.timezone);
+    return {
+      dayKey: [facility.customerId || "customer", facility.id, localDate].join("::"),
+      localDate: localDate,
+      timezone: facility.timezone,
+      startUtc: timezone.resolveLocalDateTime(
+        localDate, "00:00", facility.timezone, "earlier"
+      ).iso,
+      endUtc: new Date(nowMs).toISOString()
+    };
+  }
+
+  function rawValue(record, lower, upper) {
+    return record && Object.prototype.hasOwnProperty.call(record, lower)
+      ? record[lower] : record && record[upper];
+  }
+
+  function moveRecordKey(record) {
+    var id = rawValue(record, "id", "Id");
+    return id || [
+      rawValue(record, "dateTime", "DateTime"),
+      rawValue(record, "data", "Data"),
+      rawValue(record, "speed", "Speed")
+    ].join("::");
+  }
+
+  function mergeMoveRecords(existing, incoming) {
+    var records = new Map();
+    (existing || []).concat(incoming || []).forEach(function (record) {
+      var timestamp = rawValue(record, "dateTime", "DateTime");
+      if (Number.isFinite(Date.parse(timestamp))) {
+        records.set(moveRecordKey(record), record);
+      }
+    });
+    return Array.from(records.values()).sort(function (left, right) {
+      return Date.parse(rawValue(left, "dateTime", "DateTime"))
+        - Date.parse(rawValue(right, "dateTime", "DateTime"));
+    });
+  }
+
+  function operationsMoveStatusCall(deviceId, fromDate, toDate) {
+    return ["Get", {
+      typeName: "StatusData",
+      search: {
+        deviceSearch: { id: deviceId },
+        diagnosticSearch: { id: OPERATIONS_MOVE_DIAGNOSTIC_ID },
+        fromDate: fromDate,
+        toDate: toDate
+      },
+      resultsLimit: OPERATIONS_MOVE_RESULT_LIMIT,
+      sort: { sortBy: "date", sortDirection: "asc" }
+    }];
+  }
+
+  function operationsMoveLogCall(deviceId, fromDate, toDate) {
+    return ["Get", {
+      typeName: "LogRecord",
+      search: {
+        deviceSearch: { id: deviceId },
+        fromDate: fromDate,
+        toDate: toDate
+      },
+      resultsLimit: OPERATIONS_MOVE_RESULT_LIMIT,
+      sort: { sortBy: "date", sortDirection: "asc" }
+    }];
+  }
+
+  function moveCallWithRange(call, fromDate, toDate) {
+    var copy = JSON.parse(JSON.stringify(call));
+    copy[1].search.fromDate = fromDate;
+    copy[1].search.toDate = toDate;
+    return copy;
+  }
+
+  async function fetchCompleteMoveRecords(api, call, fromDate, toDate, depth) {
+    var records = await client.call(api, call[0], call[1]);
+    if (!Array.isArray(records) || records.length < OPERATIONS_MOVE_RESULT_LIMIT) {
+      return Array.isArray(records) ? records : [];
+    }
+    var startMs = Date.parse(fromDate);
+    var endMs = Date.parse(toDate);
+    if (depth >= 16 || endMs - startMs <= 1000) {
+      var error = new Error("Operations move-history result limit reached");
+      error.code = "OPERATIONS_MOVE_RESULT_LIMIT";
+      throw error;
+    }
+    var midpoint = new Date(startMs + Math.floor((endMs - startMs) / 2))
+      .toISOString();
+    var halves = await Promise.all([
+      fetchCompleteMoveRecords(
+        api, moveCallWithRange(call, fromDate, midpoint), fromDate, midpoint, depth + 1
+      ),
+      fetchCompleteMoveRecords(
+        api, moveCallWithRange(call, midpoint, toDate), midpoint, toDate, depth + 1
+      )
+    ]);
+    return mergeMoveRecords(halves[0], halves[1]);
+  }
+
+  function authorizedMoveRecords(records, deviceId) {
+    return (records || []).filter(function (record) {
+      var device = rawValue(record, "device", "Device");
+      var recordDeviceId = device && rawValue(device, "id", "Id");
+      return !recordDeviceId || recordDeviceId === deviceId;
+    });
   }
 
   function freshRecord(record, nowMs, freshnessMs) {
@@ -724,7 +843,7 @@
   }
 
   function unprofiledViewModel(device, enrollment, facility, range, records,
-    statusInfo, nowMs, driverContext, retainedState) {
+    statusInfo, nowMs, driverContext, retainedState, moveState) {
     var communication = communicationPresentation(statusInfo, facility, nowMs);
     var current = currentOperationalPresentation(
       statusInfo, enrollment, facility, nowMs, retainedState
@@ -755,6 +874,19 @@
         : ["DELAYED", "STALE", "NOT_COMMUNICATING", "OFFLINE_72_HOURS"]
           .indexOf(communication.condition) !== -1
           ? "TELEMETRY_" + communication.condition : null;
+    var moveProjection = fifthWheelConfigured(enrollment) && moveState
+      && moveState.available === true ? {
+        completedMoves: moveState.completedMoves,
+        verifiedMovesLabel: String(moveState.completedMoves),
+        moveInProgress: moveState.moveInProgress === true,
+        lastCompletedMoveAt: moveState.lastCompletedMoveAt || null
+      } : {
+        completedMoves: null,
+        verifiedMovesLabel: fifthWheelConfigured(enrollment)
+          ? null : "Verified Moves Unavailable",
+        moveInProgress: false,
+        lastCompletedMoveAt: null
+      };
     return Object.assign({
       deviceId: device.deviceId,
       displayName: device.displayName,
@@ -793,10 +925,10 @@
       trailerStateAt: trailer.timestamp,
       trailerStateDelayed: trailer.delayed,
       trailerStateSupported: trailer.supported,
-      completedMoves: null,
-      verifiedMovesLabel: null,
-      moveInProgress: false,
-      lastCompletedMoveAt: null,
+      completedMoves: moveProjection.completedMoves,
+      verifiedMovesLabel: moveProjection.verifiedMovesLabel,
+      moveInProgress: moveProjection.moveInProgress,
+      lastCompletedMoveAt: moveProjection.lastCompletedMoveAt,
       fuelLevelPercent: fuelLevel.value,
       fuelLevelAt: fuelLevel.timestamp,
       fuelLevelRaw: fuelLevel.rawValue,
@@ -909,17 +1041,17 @@
   }
 
   function buildViewModel(device, enrollment, facility, range, records, statusInfo,
-    nowMs, driverContext, engineHealth, retainedState) {
+    nowMs, driverContext, engineHealth, retainedState, moveState) {
     if (enrollment && enrollment.liveOperationsNative === true) {
       return unprofiledViewModel(
         device, enrollment, facility, range, records, statusInfo, nowMs,
-        driverContext, retainedState
+        driverContext, retainedState, moveState
       );
     }
     if (!enrollment || enrollment.profileConfigured === false) {
       return unprofiledViewModel(
         device, enrollment, facility, range, records, statusInfo, nowMs,
-        driverContext, retainedState
+        driverContext, retainedState, moveState
       );
     }
     var hasFifthWheel = fifthWheelConfigured(enrollment);
@@ -1108,12 +1240,19 @@
       driverCursors: new Map(),
       lastOperationalStateByDevice: new Map(),
       engineHealthByDevice: new Map(),
+      moveStateByDevice: new Map(),
+      moveDayKey: null,
+      moveWindow: null,
+      moveLoadMetrics: null,
       cursors: {}
     };
 
     function scopeKey(context) {
       var selection = context.selection;
       return [
+        selection && selection.customer && selection.customer.id
+          || selection && selection.facility && selection.facility.customerId
+          || "blocked",
         selection && selection.facility && selection.facility.id || "blocked"
       ].join("::");
     }
@@ -1196,6 +1335,10 @@
 
     function viewModels(nowMs) {
       cache.range.endUtc = new Date(nowMs).toISOString();
+      var today = operationsMoveWindow(cache.facility, nowMs);
+      if (cache.moveDayKey && cache.moveDayKey !== today.dayKey) {
+        resetMoveState(today);
+      }
       return cache.devices.map(function (device) {
         var model = buildViewModel(
           device,
@@ -1210,7 +1353,8 @@
             status: cache.driverStatusByDevice.get(device.deviceId) || "CURRENT"
           },
           cache.engineHealthByDevice.get(device.deviceId) || null,
-          cache.lastOperationalStateByDevice.get(device.deviceId) || null
+          cache.lastOperationalStateByDevice.get(device.deviceId) || null,
+          cache.moveStateByDevice.get(device.deviceId) || null
         );
         if (model.operationalState !== "UNAVAILABLE"
           && model.operationalStateEvidenceAt) {
@@ -1221,6 +1365,121 @@
         }
         return model;
       });
+    }
+
+    function capableDevices() {
+      return cache.devices.filter(function (device) {
+        return device.fifthWheelCapabilityGroupMember === true;
+      });
+    }
+
+    function resetMoveState(window) {
+      cache.moveDayKey = window.dayKey;
+      cache.moveWindow = window;
+      cache.moveStateByDevice = new Map();
+      capableDevices().forEach(function (device) {
+        cache.moveStateByDevice.set(device.deviceId, {
+          available: false,
+          auxRecords: [],
+          speedRecords: [],
+          completedMoves: null,
+          moveInProgress: false,
+          lastCompletedMoveAt: null,
+          cursorUtc: window.startUtc,
+          dayKey: window.dayKey
+        });
+      });
+    }
+
+    async function refreshMoves(context, options) {
+      if (!cache.facility || !cache.devices.length) {
+        return { ok: true, scopeKey: cache.scopeKey, viewModels: [] };
+      }
+      var nowMs = context.nowMs || Date.now();
+      var window = operationsMoveWindow(cache.facility, nowMs);
+      var rebuild = options && options.rebuild === true;
+      if (rebuild || cache.moveDayKey !== window.dayKey) {
+        resetMoveState(window);
+      } else {
+        cache.moveWindow = window;
+      }
+      var requestScopeKey = cache.scopeKey;
+      var overlapMs = cache.facility.refresh
+        && Number.isFinite(cache.facility.refresh.overlapWindowMs)
+        ? cache.facility.refresh.overlapWindowMs : 15000;
+      var devices = capableDevices();
+      var queryCount = 0;
+      var results = await Promise.all(devices.map(async function (device) {
+        var current = cache.moveStateByDevice.get(device.deviceId);
+        var cursor = rebuild ? window.startUtc : current.cursorUtc || window.startUtc;
+        var fromMs = Math.max(
+          Date.parse(window.startUtc), Date.parse(cursor) - overlapMs
+        );
+        var fromDate = new Date(fromMs).toISOString();
+        queryCount += 2;
+        try {
+          var batches = await Promise.all([
+            fetchCompleteMoveRecords(
+              context.api,
+              operationsMoveStatusCall(device.deviceId, fromDate, window.endUtc),
+              fromDate,
+              window.endUtc,
+              0
+            ),
+            fetchCompleteMoveRecords(
+              context.api,
+              operationsMoveLogCall(device.deviceId, fromDate, window.endUtc),
+              fromDate,
+              window.endUtc,
+              0
+            )
+          ]);
+          return {
+            deviceId: device.deviceId,
+            auxRecords: authorizedMoveRecords(batches[0], device.deviceId),
+            speedRecords: authorizedMoveRecords(batches[1], device.deviceId),
+            cursorUtc: window.endUtc
+          };
+        } catch (error) {
+          return { deviceId: device.deviceId, error: error };
+        }
+      }));
+      if (cache.scopeKey !== requestScopeKey || cache.moveDayKey !== window.dayKey) {
+        return { ok: false, stale: true, scopeKey: requestScopeKey };
+      }
+      var failures = 0;
+      results.forEach(function (result) {
+        var state = cache.moveStateByDevice.get(result.deviceId);
+        if (!state || result.error) {
+          failures += 1;
+          return;
+        }
+        state.auxRecords = mergeMoveRecords(state.auxRecords, result.auxRecords);
+        state.speedRecords = mergeMoveRecords(state.speedRecords, result.speedRecords);
+        state.cursorUtc = result.cursorUtc;
+        var completed = shiftPerformance.verifiedMoveRecords(
+          state.auxRecords, state.speedRecords
+        );
+        state.available = Array.isArray(completed);
+        state.completedMoves = state.available ? completed.length : null;
+        state.lastCompletedMoveAt = state.available && completed.length
+          ? completed[completed.length - 1].completionTimestamp : null;
+        state.moveInProgress = false;
+      });
+      cache.moveLoadMetrics = {
+        capableDeviceCount: devices.length,
+        queryCount: queryCount,
+        failureCount: failures,
+        fromUtc: window.startUtc,
+        toUtc: window.endUtc
+      };
+      return {
+        ok: true,
+        scopeKey: cache.scopeKey,
+        moveWindow: window,
+        moveLoadMetrics: Object.assign({}, cache.moveLoadMetrics),
+        viewModels: viewModels(nowMs)
+      };
     }
 
     function initialDriverRequests(endUtc) {
@@ -1313,6 +1572,10 @@
         cache.enrollments = new Map();
         cache.recordsByDevice = new Map();
         cache.statusByDevice = new Map();
+        cache.moveStateByDevice = new Map();
+        cache.moveDayKey = null;
+        cache.moveWindow = null;
+        cache.moveLoadMetrics = null;
         return {
           ok: true,
           code: "configured-empty-facility",
@@ -1379,7 +1642,12 @@
       cache.driverCursors = new Map();
       cache.lastOperationalStateByDevice = new Map();
       cache.engineHealthByDevice = new Map();
+      cache.moveStateByDevice = new Map();
+      cache.moveDayKey = null;
+      cache.moveWindow = null;
+      cache.moveLoadMetrics = null;
       cache.cursors = {};
+      resetMoveState(operationsMoveWindow(facility, nowMs));
       try {
         await normalizeStatuses(context.api, currentStatuses);
       } catch (error) {
@@ -1597,6 +1865,7 @@
       scopeKey: scopeKey,
       checkScope: checkScope,
       initialLoad: initialLoad,
+      refreshMoves: refreshMoves,
       refreshOperational: refreshCurrentOperational,
       refreshFuelDef: function (context) {
         return refreshChannels(context, FUEL_DEF_CHANNELS, false);
@@ -1605,6 +1874,26 @@
         return refreshChannels(context, ENGINE_HOURS_CHANNELS, false);
       },
       refreshEngineHealth: refreshEngineHealth,
+      clear: function () {
+        cache.scopeKey = null;
+        cache.facility = null;
+        cache.devices = [];
+        cache.enrollments = new Map();
+        cache.range = null;
+        cache.recordsByDevice = new Map();
+        cache.statusByDevice = new Map();
+        cache.driverEventsByDevice = new Map();
+        cache.driverIdentities = new Map();
+        cache.driverStatusByDevice = new Map();
+        cache.driverCursors = new Map();
+        cache.lastOperationalStateByDevice = new Map();
+        cache.engineHealthByDevice = new Map();
+        cache.moveStateByDevice = new Map();
+        cache.moveDayKey = null;
+        cache.moveWindow = null;
+        cache.moveLoadMetrics = null;
+        cache.cursors = {};
+      },
       snapshot: function () {
         return cache;
       }
@@ -1634,6 +1923,8 @@
     operatingModePresentation: operatingModePresentation,
     operatingModeQualifier: operatingModeQualifier,
     mergeRecords: mergeRecords,
+    mergeMoveRecords: mergeMoveRecords,
+    operationsMoveWindow: operationsMoveWindow,
     sourceTelemetry: sourceTelemetry
   };
 }));

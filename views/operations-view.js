@@ -20,6 +20,9 @@
     "operationalStateLabel",
     "operationalStateQualifierLabel",
     "completedMoves",
+    "verifiedMovesLabel",
+    "moveInProgress",
+    "lastCompletedMoveAt",
     "stateStartedAt",
     "stateDurationMs",
     "currentSpeedMph",
@@ -75,6 +78,9 @@
 
   function operationsSummaryModel(models, facility) {
     var source = Array.isArray(models) ? models : [];
+    var completed = source.filter(function (model) {
+      return Number.isFinite(model.completedMoves);
+    });
     return {
       moving: source.filter(function (model) {
         return model.operationalState === "MOVING";
@@ -88,9 +94,9 @@
       withTrailer: source.filter(function (model) {
         return model.operationalStateQualifierLabel === "w/ Trailer";
       }).length,
-      completedMoves: source.reduce(function (total, model) {
-        return total + (Number.isFinite(model.completedMoves) ? model.completedMoves : 0);
-      }, 0),
+      completedMoves: completed.length ? completed.reduce(function (total, model) {
+        return total + model.completedMoves;
+      }, 0) : null,
       authorizedUnits: source.length,
       dataIssues: source.filter(function (model) {
         return Boolean(model.warningCode);
@@ -184,8 +190,6 @@
     var domRows = new Map();
     var currentFacility = null;
     var currentUserContext = options && options.userContext || null;
-    var reportByDevice = new Map();
-    var appliedReportWindow = null;
     var clearedScopeSequence = 0;
     var onSelectionChange = options
       && typeof options.onSelectionChange === "function"
@@ -838,18 +842,18 @@
       byId("siq-kpi-idling-value").textContent = String(summary.idling);
       byId("siq-kpi-off-value").textContent = String(summary.off);
       byId("siq-kpi-coupled-value").textContent = String(summary.withTrailer);
-      byId("siq-kpi-completed-value").textContent = appliedReportWindow
-        ? String(summary.completedMoves) : "—";
+      byId("siq-kpi-completed-value").textContent =
+        Number.isFinite(summary.completedMoves)
+          ? String(summary.completedMoves) : "—";
       byId("siq-kpi-unit-detail").textContent =
         summary.authorizedUnits + " units in this facility";
     }
 
     function initializeRows(scopeKey, models) {
       var previousSelected = selectedDeviceId;
-      var decorated = decorateModels(models);
-      registry.initialize(scopeKey, decorated);
-      updateKpis(decorated);
-      applyFilter(decorated);
+      registry.initialize(scopeKey, models || []);
+      updateKpis(models || []);
+      applyFilter(models || []);
       if (previousSelected && registry.has(previousSelected)) {
         selectedDeviceId = previousSelected;
         setSelectedRows();
@@ -862,40 +866,8 @@
       byId("siq-kpi-strip").hidden = false;
     }
 
-    function decorateModels(models) {
-      return (models || []).map(function (model) {
-        return Object.assign({}, model, {
-          completedMoves: appliedReportWindow && reportByDevice.has(model.deviceId)
-            ? reportByDevice.get(model.deviceId) : null
-        });
-      });
-    }
-
-    function appliedWindowLabel(window) {
-      function label(value) {
-        return new Date(value).toLocaleString([], {
-          timeZone: window.timezone,
-          month: "short", day: "numeric", year: "numeric",
-          hour: "numeric", minute: "2-digit"
-        });
-      }
-      return label(window.startUtc) + " – " + label(window.endUtc);
-    }
-
     function applyReportResult(result) {
-      if (!result || !result.window || !Array.isArray(result.units)) {
-        return false;
-      }
-      appliedReportWindow = result.window;
-      reportByDevice = new Map(result.units.map(function (unit) {
-        return [unit.deviceId, Number.isFinite(unit.moveCount) ? unit.moveCount : null];
-      }));
-      var models = decorateModels(registry.models());
-      registry.patch(models);
-      updateKpis(models);
-      byId("siq-operations-window-label").textContent =
-        "Completed Moves · " + appliedWindowLabel(result.window);
-      return true;
+      return false;
     }
 
     function showInitialLoading() {
@@ -983,8 +955,6 @@
       selectedDeviceId = null;
       detailRefs = null;
       currentFacility = null;
-      reportByDevice.clear();
-      appliedReportWindow = null;
       domRows.clear();
       registry.initialize("cleared::" + clearedScopeSequence, []);
       byId("siq-detail-drawer").classList.remove("siq-detail-drawer--open");
@@ -993,7 +963,8 @@
       byId("siq-brand-context").hidden = true;
       byId("siq-facility-context-bar").hidden = true;
       byId("siq-kpi-strip").hidden = true;
-      byId("siq-operations-window-label").textContent = "Completed Moves";
+      byId("siq-operations-window-label").textContent =
+        "Completed Moves · Today so far";
       body.replaceChildren();
     }
 
@@ -1049,6 +1020,8 @@
         ? result.shiftOccurrence.startLocalDateTime.slice(11)
           + "–" + result.shiftOccurrence.endLocalDateTime.slice(11)
         : "Current telemetry";
+      byId("siq-operations-window-label").textContent =
+        "Completed Moves · Today so far";
       updateKpis();
     }
 
@@ -1090,10 +1063,9 @@
       initializeRows: initializeRows,
       applyReportResult: applyReportResult,
       patchRows: function (models) {
-        var decorated = decorateModels(models);
-        var mutations = registry.patch(decorated);
-        updateKpis(decorated);
-        applyFilter(decorated);
+        var mutations = registry.patch(models || []);
+        updateKpis(models || []);
+        applyFilter(models || []);
         return mutations;
       },
       patchEngineHealth: function (deviceId, model) {

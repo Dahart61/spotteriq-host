@@ -71,7 +71,11 @@
 
     function clearActiveScope() {
       if (controller) {
-        controller.blur();
+        if (typeof controller.clearScope === "function") {
+          controller.clearScope();
+        } else {
+          controller.blur();
+        }
       }
       if (performanceController
         && typeof performanceController.clear === "function") {
@@ -203,12 +207,7 @@
         );
         performanceController = root.SIQ_PERFORMANCE_CONTROLLER
           .createPerformanceController({
-            view: performanceView,
-            onApplied: function (report) {
-              if (view && typeof view.applyReportResult === "function") {
-                view.applyReportResult(report);
-              }
-            }
+            view: performanceView
           });
         performanceView.bind(performanceController);
       }
