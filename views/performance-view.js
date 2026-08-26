@@ -22,10 +22,6 @@
       if (value !== undefined) { node.textContent = value; }
       return node;
     }
-    function dash(value) {
-      return value === null || value === undefined || !Number.isFinite(value)
-        ? "—" : value;
-    }
     function duration(minutes) {
       if (!Number.isFinite(minutes)) { return "—"; }
       var rounded = Math.round(minutes);
@@ -157,14 +153,21 @@
       var metrics = element("div", "siq-shift-unit-detail__metrics");
       metrics.append(
         metric("Off", duration(unit.offMinutes)),
-        metric("Unavailable", duration(unit.unavailableMinutes)),
-        metric("Productive Fuel", gallons(unit.productiveFuelGallons)),
-        metric("Gallons / Productive Hour", dash(
-          Number.isFinite(unit.gallonsPerProductiveHour)
-            ? unit.gallonsPerProductiveHour.toFixed(2) : null
-        )),
-        metric("Longest Inactivity", duration(unit.prolongedInactivityMinutes))
+        metric("Unavailable", duration(unit.unavailableMinutes))
       );
+      if (Number.isFinite(unit.productiveFuelGallons)) {
+        metrics.appendChild(metric(
+          "Productive Fuel", gallons(unit.productiveFuelGallons)
+        ));
+      }
+      if (Number.isFinite(unit.gallonsPerProductiveHour)) {
+        metrics.appendChild(metric(
+          "Gallons / Productive Hour", unit.gallonsPerProductiveHour.toFixed(2)
+        ));
+      }
+      metrics.appendChild(metric(
+        "Longest Inactivity", duration(unit.prolongedInactivityMinutes)
+      ));
       if (unit.fifthWheelCapable) {
         metrics.append(
           metric("Trailer Coupled", duration(unit.coupledMinutes)),

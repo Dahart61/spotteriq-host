@@ -452,6 +452,59 @@
     });
   }
 
+  function historicalFifthWheelSamples(
+    fifthWheelRecords,
+    evidenceRecords,
+    continuityMs
+  ) {
+    var events = [];
+    storedSamples(fifthWheelRecords, function (record) {
+      return booleanLevel(valueOf(record, "data", "Data"));
+    }).forEach(function (sample) {
+      events.push({
+        timestamp: sample.timestamp,
+        value: sample.value,
+        fifthWheel: true
+      });
+    });
+    storedSamples(evidenceRecords, function () { return true; })
+      .forEach(function (sample) {
+        events.push({ timestamp: sample.timestamp, fifthWheel: false });
+      });
+    events.sort(function (left, right) {
+      return Date.parse(left.timestamp) - Date.parse(right.timestamp)
+        || Number(left.fifthWheel) - Number(right.fifthWheel);
+    });
+
+    var currentState = null;
+    var lastEvidenceMs = null;
+    var samples = [];
+    events.forEach(function (event) {
+      var eventMs = Date.parse(event.timestamp);
+      if (lastEvidenceMs !== null && eventMs - lastEvidenceMs > continuityMs) {
+        if (currentState !== null) {
+          samples.push({
+            timestamp: new Date(lastEvidenceMs + continuityMs).toISOString(),
+            value: null
+          });
+        }
+        currentState = null;
+      }
+      if (event.fifthWheel) {
+        currentState = event.value;
+        samples.push({ timestamp: event.timestamp, value: currentState });
+      }
+      lastEvidenceMs = eventMs;
+    });
+    if (currentState !== null && lastEvidenceMs !== null) {
+      samples.push({
+        timestamp: new Date(lastEvidenceMs + continuityMs).toISOString(),
+        value: null
+      });
+    }
+    return samples;
+  }
+
   function buildReportTimeline(device, data, window, options) {
     var logRecords = data && data.speed || [];
     var capability = reportCapability(device, options);
@@ -515,7 +568,12 @@
     });
   }
 
-  function couplingBuckets(capable, fifthWheelRecords, activity) {
+  function couplingBuckets(
+    capable,
+    fifthWheelRecords,
+    activity,
+    continuityEvidence
+  ) {
     var result = {
       coupledMinutes: 0,
       uncoupledMinutes: 0,
@@ -527,12 +585,21 @@
     if (!capable) {
       return result;
     }
-    var jaw = sorted(fifthWheelRecords).map(function (record) {
+    // MyGeotab may add ID-less values at requested range boundaries. Those
+    // interpolations describe neither a stored observation nor its original
+    // time, so they cannot establish historical trailer state. Stored AUX
+    // observations establish state; other stored telemetry only proves that
+    // an already-established state remains continuous.
+    var jaw = historicalFifthWheelSamples(
+      fifthWheelRecords,
+      continuityEvidence,
+      HISTORICAL_CONTINUITY_MAX_GAP_MS
+    ).map(function (sample) {
       return {
-        time: recordTime(record),
-        value: booleanLevel(valueOf(record, "data", "Data"))
+        time: Date.parse(sample.timestamp),
+        value: sample.value
       };
-    }).filter(function (record) { return record.value !== null; });
+    });
     var jawIndex = 0;
     var currentJaw = null;
     function add(start, end, interval) {
@@ -603,7 +670,12 @@
         inactivityRun = 0;
       }
     });
-    Object.assign(buckets, couplingBuckets(capable, data.fifthWheel, activity));
+    Object.assign(buckets, couplingBuckets(
+      capable,
+      data.fifthWheel,
+      activity,
+      (data.rpm || []).concat(data.ignition || [], data.speed || [])
+    ));
 
     var fuelGallons = cumulativeDelta(data.fuel, LITERS_TO_GALLONS);
     var engineHours = engineHoursReport.cumulativeDeltaHours(data.engineHours);
@@ -743,6 +815,7 @@
     buildReportTimeline: buildReportTimeline,
     continuousIgnitionSamples: historicalIgnitionSamples,
     historicalIgnitionSamples: historicalIgnitionSamples,
+    historicalFifthWheelSamples: historicalFifthWheelSamples,
     rpmOnlyIgnitionSamples: rpmOnlyIgnitionSamples,
     countVerifiedMoves: countVerifiedMoves,
     cumulativeDelta: cumulativeDelta,
