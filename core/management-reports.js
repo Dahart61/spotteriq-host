@@ -60,6 +60,13 @@
     return supported.length ? sum(supported, key) : null;
   }
 
+  function completeSum(rows, key) {
+    var source = Array.isArray(rows) ? rows : [];
+    return source.length && source.every(function (row) {
+      return Number.isFinite(row[key]);
+    }) ? sum(source, key) : null;
+  }
+
   function driverLabel(interval) {
     return interval && interval.driverId
       ? interval.driverDisplayName || "Identified driver" : "Unattributed";
@@ -478,7 +485,7 @@
         stationaryMinutes: sum(trucks, "stationaryMinutes"),
         utilizationPercent: engineRunning > 0 ? moving / engineRunning * 100 : null,
         fuelGallons: optionalSum(trucks, "fuelGallons"),
-        idleFuelGallons: optionalSum(trucks, "idleFuelGallons"),
+        idleFuelGallons: completeSum(trucks, "idleFuelGallons"),
         totalDistanceMiles: null,
         peakSpeedMph: trucks.reduce(function (maximum, truck) {
           return Number.isFinite(truck.maxSpeedMph)

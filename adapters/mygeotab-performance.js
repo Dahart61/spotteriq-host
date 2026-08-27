@@ -39,19 +39,20 @@
     ignition: "DiagnosticIgnitionId",
     fifthWheel: "DiagnosticAux1Id",
     fuel: "DiagnosticTotalFuelUsedId",
+    idleFuel: "DiagnosticTotalIdleFuelUsedId",
     engineHours: "DiagnosticEngineHoursId",
     engineHoursAdjustment: "DiagnosticEngineHoursAdjustmentId"
   });
   var REPORT_SOURCE_PLANS = Object.freeze({
     overview: Object.freeze([
-      "rpm", "ignition", "fuel", "engineHours",
+      "rpm", "ignition", "fuel", "idleFuel", "engineHours",
       "fifthWheel", "speed", "driverEvents"
     ]),
     drivers: Object.freeze([
       "rpm", "ignition", "fifthWheel", "speed", "driverEvents"
     ]),
     trucks: Object.freeze([
-      "rpm", "ignition", "fuel", "engineHours",
+      "rpm", "ignition", "fuel", "idleFuel", "engineHours",
       "fifthWheel", "speed", "driverEvents"
     ]),
     engineHours: Object.freeze([
@@ -273,7 +274,24 @@
           )
         });
         });
-      ["fuel", "engineHours", "engineHoursAdjustment"].filter(required)
+      ["fuel", "idleFuel"].filter(required).forEach(function (source) {
+        [
+          { suffix: "Begin", exactUtc: window.startUtc },
+          { suffix: "End", exactUtc: window.endUtc }
+        ].forEach(function (boundary) {
+          specs.push({
+            deviceId: device.deviceId,
+            source: source + boundary.suffix,
+            startUtc: boundary.exactUtc,
+            endUtc: boundary.exactUtc,
+            call: statusDataCall(
+              device.deviceId, DIAGNOSTICS[source],
+              boundary.exactUtc, boundary.exactUtc
+            )
+          });
+        });
+      });
+      ["engineHours", "engineHoursAdjustment"].filter(required)
         .forEach(function (source) {
         specs.push({
           deviceId: device.deviceId,
@@ -735,7 +753,9 @@
     }
     var byDevice = new Map((devices || []).map(function (device) {
       return [device.deviceId, {
-        rpm: [], ignition: [], fuel: [], engineHours: [], engineHoursAdjustment: [],
+        rpm: [], ignition: [], fuel: [], idleFuel: [],
+        fuelBegin: [], fuelEnd: [], idleFuelBegin: [], idleFuelEnd: [],
+        engineHours: [], engineHoursAdjustment: [],
         engineHoursAdjustmentTrustworthy: adjustmentTrustworthy,
         fifthWheel: [],
         speed: [], driverEvents: []

@@ -353,8 +353,56 @@
     if (values.length < 2) {
       return null;
     }
+    for (var index = 1; index < values.length; index += 1) {
+      if (values[index] < values[index - 1]) {
+        return null;
+      }
+    }
     var delta = (values[values.length - 1] - values[0]) * multiplier;
     return Number.isFinite(delta) && delta >= 0 ? delta : null;
+  }
+
+  function exactPointValue(records, expectedUtc) {
+    var points = sorted(records);
+    var expected = Date.parse(expectedUtc);
+    if (points.length !== 1 || !Number.isFinite(expected)
+      || recordTime(points[0]) !== expected) {
+      return null;
+    }
+    var raw = valueOf(points[0], "data", "Data");
+    if (raw === null || raw === "") {
+      return null;
+    }
+    var value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function exactMeterDelta(beginRecords, endRecords, window, multiplier) {
+    var begin = exactPointValue(beginRecords, window && window.startUtc);
+    var end = exactPointValue(endRecords, window && window.endUtc);
+    var factor = Number.isFinite(multiplier) ? multiplier : 1;
+    if (begin === null || end === null || end < begin) {
+      return null;
+    }
+    var delta = (end - begin) * factor;
+    return Number.isFinite(delta) && delta >= 0 ? delta : null;
+  }
+
+  function fuelMeterDeltas(data, window) {
+    var hasExactTotal = Object.prototype.hasOwnProperty.call(data || {}, "fuelBegin")
+      || Object.prototype.hasOwnProperty.call(data || {}, "fuelEnd");
+    var hasExactIdle = Object.prototype.hasOwnProperty.call(data || {}, "idleFuelBegin")
+      || Object.prototype.hasOwnProperty.call(data || {}, "idleFuelEnd");
+    var total = hasExactTotal
+      ? exactMeterDelta(data.fuelBegin, data.fuelEnd, window, LITERS_TO_GALLONS)
+      : cumulativeDelta(data && data.fuel, LITERS_TO_GALLONS);
+    var idle = hasExactIdle
+      ? exactMeterDelta(data.idleFuelBegin, data.idleFuelEnd, window, LITERS_TO_GALLONS)
+      : cumulativeDelta(data && data.idleFuel, LITERS_TO_GALLONS);
+    if (total === null || idle === null || idle > total) {
+      return { total: total, idle: null, productive: null };
+    }
+    return { total: total, idle: idle, productive: total - idle };
   }
 
   function lastDriverName(events) {
@@ -679,19 +727,11 @@
       (data.rpm || []).concat(data.ignition || [], data.speed || [])
     ));
 
-    var fuelGallons = cumulativeDelta(data.fuel, LITERS_TO_GALLONS);
+    var fuelMeters = fuelMeterDeltas(data, window);
+    var fuelGallons = fuelMeters.total;
     var engineHours = engineHoursReport.cumulativeDeltaHours(data.engineHours);
-    var averageGph = fuelGallons !== null && engineHours !== null && engineHours > 0
-      ? fuelGallons / engineHours : null;
-    var allocationSupported = buckets.stoppedMinutes === 0;
-    var idleFuelGallons = allocationSupported && averageGph !== null
-      ? Math.min(fuelGallons, averageGph * buckets.idleMinutes / 60) : null;
-    var productiveFuel = allocationSupported
-      && fuelGallons !== null && idleFuelGallons !== null
-      ? Math.max(0, fuelGallons - idleFuelGallons) : null;
-    var productiveHours = Math.max(
-      0, buckets.engineRunningMinutes - buckets.idleMinutes
-    ) / 60;
+    var idleFuelGallons = fuelMeters.idle;
+    var productiveFuel = fuelMeters.productive;
     var speedObservations = sorted(data.speed).map(function (record) {
       return { timestamp: new Date(recordTime(record)).toISOString(), mph: speedMph(record) };
     }).filter(function (observation) { return observation.mph !== null; });
@@ -719,11 +759,10 @@
       fuelGallons: fuelGallons,
       engineHoursDelta: engineHours,
       idleFuelGallons: idleFuelGallons,
-      idleFuelEstimated: idleFuelGallons !== null,
-      fuelAllocationSupported: allocationSupported,
+      idleFuelEstimated: false,
+      fuelAllocationSupported: idleFuelGallons !== null,
       productiveFuelGallons: productiveFuel,
-      gallonsPerProductiveHour: productiveFuel !== null && productiveHours > 0
-        ? productiveFuel / productiveHours : null,
+      gallonsPerProductiveHour: null,
       maxSpeedMph: maxSpeedMph,
       peakSpeedTimestamp: peakSpeed ? peakSpeed.timestamp : null,
       verifiedMoveRecords: moveRecords,
@@ -758,6 +797,13 @@
     return values.length ? sum(values, key) : null;
   }
 
+  function completeSum(units, key) {
+    var source = Array.isArray(units) ? units : [];
+    return source.length && source.every(function (unit) {
+      return Number.isFinite(unit[key]);
+    }) ? sum(source, key) : null;
+  }
+
   function facilitySummary(units, window) {
     var source = Array.isArray(units) ? units : [];
     var totalObservable = window.durationMinutes * source.length;
@@ -787,7 +833,7 @@
       unavailableMinutes: sum(source, "unavailableMinutes"),
       idlePercent: engineRunning > 0 ? idle / engineRunning * 100 : null,
       fuelGallons: optionalSum(source, "fuelGallons"),
-      idleFuelGallons: optionalSum(source, "idleFuelGallons"),
+      idleFuelGallons: completeSum(source, "idleFuelGallons"),
       coupledMinutes: optionalSum(
         source.filter(function (unit) { return unit.fifthWheelCapable; }), "coupledMinutes"
       ),
@@ -821,7 +867,10 @@
     rpmOnlyIgnitionSamples: rpmOnlyIgnitionSamples,
     countVerifiedMoves: countVerifiedMoves,
     cumulativeDelta: cumulativeDelta,
+    exactMeterDelta: exactMeterDelta,
+    exactPointValue: exactPointValue,
     facilitySummary: facilitySummary,
+    fuelMeterDeltas: fuelMeterDeltas,
     reportCapability: reportCapability,
     zeroEngineOperationEvidence: zeroEngineOperationEvidence,
     verifiedMoveRecords: verifiedMoveRecords,

@@ -215,8 +215,8 @@
         ["Fuel Used", overview.fuelGallons, function (value) {
           return gallons(value, false);
         }],
-        ["Estimated Idle Fuel", overview.idleFuelGallons, function (value) {
-          return gallons(value, true);
+        ["Idle Fuel", overview.idleFuelGallons, function (value) {
+          return gallons(value, false);
         }],
         ["Total Distance", overview.totalDistanceMiles, miles],
         ["Peak Observed Speed", overview.peakSpeedMph, speed]
@@ -321,7 +321,7 @@
     });
     var truckHeaders = [
       "Unit", "Engine Running", "Moving", "Engine Running Stationary",
-      "Utilization", "Verified Moves", "Fuel Used", "Estimated Idle Fuel",
+      "Utilization", "Verified Moves", "Fuel Used", "Idle Fuel",
       "Engine Hours Delta", "Max Observed Speed", "Drivers"
     ];
     includeColumn(truckHeaders, truckRows, "Total Distance",
@@ -602,7 +602,7 @@
         ["Engine Running \u00b7 Stationary", overview.stationaryMinutes, duration],
         ["Utilization", overview.utilizationPercent, percent],
         ["Fuel Used", overview.fuelGallons, function (value) { return gallons(value, false); }],
-        ["Estimated Idle Fuel", overview.idleFuelGallons, function (value) { return gallons(value, true); }],
+        ["Idle Fuel", overview.idleFuelGallons, function (value) { return gallons(value, false); }],
         ["Peak Observed Speed", overview.peakSpeedMph, speed]
       ].forEach(function (item) {
         if (Number.isFinite(item[1])) { metrics.push(metric(item[0], item[2](item[1]))); }
@@ -734,7 +734,7 @@
           ]),
           detailGroup("Fuel / Engine", [
             ["Fuel Used", gallons(truck.fuelGallons, false)],
-            ["Estimated Idle Fuel", gallons(truck.idleFuelGallons, true)],
+            ["Idle Fuel", gallons(truck.idleFuelGallons, false)],
             ["Productive Fuel", gallons(truck.productiveFuelGallons, false)],
             ["Engine Hours Delta", hours(truck.engineHoursDelta)]
           ]),
