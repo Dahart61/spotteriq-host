@@ -106,8 +106,7 @@
         metric("Engine-Running", duration(summary.engineRunningMinutes)),
         metric("Idle", duration(summary.idleMinutes), percent(summary.idlePercent)),
         metric("Fuel Used", gallons(summary.fuelGallons)),
-        metric("Idle Fuel", gallons(summary.idleFuelGallons),
-          summary.idleFuelGallons === null ? "" : "estimated")
+        metric("Idle Fuel", gallons(summary.idleFuelGallons))
       );
       if (summary.coupledMinutes !== null) {
         container.append(
@@ -144,8 +143,7 @@
         cell("Idle", duration(unit.idleMinutes) + " / " + percent(unit.idlePercent)),
         cell("Utilization", percent(unit.utilizationPercent)),
         cell("Fuel Used", gallons(unit.fuelGallons)),
-        cell("Idle Fuel", unit.idleFuelGallons === null
-          ? "—" : gallons(unit.idleFuelGallons) + " est."),
+        cell("Idle Fuel", gallons(unit.idleFuelGallons)),
         cell("Max Speed", speed(unit.maxSpeedMph))
       );
       var detail = element("details", "siq-shift-unit-detail");
