@@ -274,6 +274,17 @@
           )
         });
         });
+      if (required("fuel")) {
+        specs.push({
+          deviceId: device.deviceId,
+          source: "fuel",
+          startUtc: window.startUtc,
+          endUtc: window.endUtc,
+          call: statusDataCall(
+            device.deviceId, DIAGNOSTICS.fuel, window.startUtc, window.endUtc
+          )
+        });
+      }
       ["fuel", "idleFuel"].filter(required).forEach(function (source) {
         [
           { suffix: "Begin", exactUtc: window.startUtc },

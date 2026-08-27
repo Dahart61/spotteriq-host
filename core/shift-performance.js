@@ -389,20 +389,21 @@
   }
 
   function fuelMeterDeltas(data, window) {
-    var hasExactTotal = Object.prototype.hasOwnProperty.call(data || {}, "fuelBegin")
-      || Object.prototype.hasOwnProperty.call(data || {}, "fuelEnd");
-    var hasExactIdle = Object.prototype.hasOwnProperty.call(data || {}, "idleFuelBegin")
-      || Object.prototype.hasOwnProperty.call(data || {}, "idleFuelEnd");
-    var total = hasExactTotal
-      ? exactMeterDelta(data.fuelBegin, data.fuelEnd, window, LITERS_TO_GALLONS)
-      : cumulativeDelta(data && data.fuel, LITERS_TO_GALLONS);
-    var idle = hasExactIdle
-      ? exactMeterDelta(data.idleFuelBegin, data.idleFuelEnd, window, LITERS_TO_GALLONS)
-      : cumulativeDelta(data && data.idleFuel, LITERS_TO_GALLONS);
-    if (total === null || idle === null || idle > total) {
+    var source = data || {};
+    var exactTotalBegin = exactPointValue(source.fuelBegin, window && window.startUtc);
+    var exactTotalEnd = exactPointValue(source.fuelEnd, window && window.endUtc);
+    var exactTotalAvailable = exactTotalBegin !== null && exactTotalEnd !== null;
+    var exactTotal = exactTotalAvailable && exactTotalEnd >= exactTotalBegin
+      ? (exactTotalEnd - exactTotalBegin) * LITERS_TO_GALLONS : null;
+    var total = exactTotalAvailable
+      ? exactTotal : cumulativeDelta(source.fuel, LITERS_TO_GALLONS);
+    var idle = exactMeterDelta(
+      source.idleFuelBegin, source.idleFuelEnd, window, LITERS_TO_GALLONS
+    );
+    if (exactTotal === null || idle === null || idle > exactTotal) {
       return { total: total, idle: null, productive: null };
     }
-    return { total: total, idle: idle, productive: total - idle };
+    return { total: total, idle: idle, productive: exactTotal - idle };
   }
 
   function lastDriverName(events) {
