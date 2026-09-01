@@ -587,72 +587,157 @@
     };
   }
 
-  function trailerPresentation(statusInfo, enrollment, nowMs) {
-    if (!fifthWheelConfigured(enrollment)) {
-      return {
-        supported: false,
-        state: normalization.FIFTH_WHEEL_STATES.UNKNOWN,
-        label: null,
-        timestamp: null,
-        delayed: false
-      };
-    }
+  function unknownTrailerPresentation(supported, timestamp) {
+    return {
+      supported: supported,
+      state: normalization.FIFTH_WHEEL_STATES.UNKNOWN,
+      label: null,
+      timestamp: timestamp || null,
+      delayed: false
+    };
+  }
+
+  function trailerObservation(statusInfo, enrollment, nowMs) {
     var mappedId = mappedDiagnosticId(
       enrollment, normalization.CHANNELS.FIFTH_WHEEL_STATUS
     );
-    var record = latestDiagnostic(statusInfo, unique([
+    var allowed = new Set(unique([
       CURRENT_DIAGNOSTIC_IDS.trailerCoupled,
       mappedId
     ]));
-    if (!record) {
-      return {
-        supported: true,
-        state: normalization.FIFTH_WHEEL_STATES.UNKNOWN,
-        label: null,
-        timestamp: null,
-        delayed: false
-      };
+    var candidates = (statusInfo && statusInfo.latestDiagnostics || []).filter(
+      function (item) {
+        return allowed.has(item.diagnosticId)
+          && Number.isFinite(Date.parse(item.timestamp));
+      }
+    );
+    if (!candidates.length) {
+      return null;
     }
-    var state;
-    if (record.diagnosticId === CURRENT_DIAGNOSTIC_IDS.trailerCoupled) {
-      var level = booleanLevel(record.value);
-      state = level === null ? normalization.FIFTH_WHEEL_STATES.UNKNOWN
-        : level ? normalization.FIFTH_WHEEL_STATES.COUPLED
-          : normalization.FIFTH_WHEEL_STATES.UNCOUPLED;
-    } else {
+    var newestMs = candidates.reduce(function (latest, item) {
+      return Math.max(latest, Date.parse(item.timestamp));
+    }, -Infinity);
+    var newest = candidates.filter(function (item) {
+      return Date.parse(item.timestamp) === newestMs;
+    });
+    var states = newest.map(function (record) {
+      if (record.diagnosticId === CURRENT_DIAGNOSTIC_IDS.trailerCoupled) {
+        var level = booleanLevel(record.value);
+        return level === null ? normalization.FIFTH_WHEEL_STATES.UNKNOWN
+          : level ? normalization.FIFTH_WHEEL_STATES.COUPLED
+            : normalization.FIFTH_WHEEL_STATES.UNCOUPLED;
+      }
       var mapping = enrollment && enrollment.diagnosticMappings
         && enrollment.diagnosticMappings[normalization.CHANNELS.FIFTH_WHEEL_STATUS];
-      state = normalization.normalizeFifthWheelStatus(
+      return normalization.normalizeFifthWheelStatus(
         record.value, mapping && mapping.coupledWhen
       );
-    }
-    if (state === normalization.FIFTH_WHEEL_STATES.UNKNOWN) {
-      return {
-        supported: true,
-        state: state,
-        label: null,
-        timestamp: record.timestamp,
-        delayed: false
-      };
-    }
-    var freshnessMs = signalFreshness(enrollment, "fifthWheelStatusFreshnessMs");
-    var timestampMs = Date.parse(record.timestamp);
-    if (!Number.isFinite(timestampMs) || nowMs < timestampMs
-      || nowMs - timestampMs >= freshnessMs) {
-      return {
-        supported: true,
-        state: normalization.FIFTH_WHEEL_STATES.UNKNOWN,
-        label: null,
-        timestamp: record.timestamp,
-        delayed: false
-      };
-    }
+    });
+    var timestampTrusted = !Number.isFinite(nowMs) || newestMs <= nowMs;
+    var trustworthy = timestampTrusted && states.length > 0 && states.every(function (state) {
+      return state !== normalization.FIFTH_WHEEL_STATES.UNKNOWN
+        && state === states[0];
+    });
+    return {
+      state: trustworthy ? states[0] : normalization.FIFTH_WHEEL_STATES.UNKNOWN,
+      timestamp: new Date(newestMs).toISOString(),
+      trustworthy: trustworthy
+    };
+  }
+
+  function knownTrailerPresentation(observation) {
     return {
       supported: true,
-      state: state,
-      label: FIFTH_WHEEL_LABELS[state],
-      timestamp: record.timestamp,
+      state: observation.state,
+      label: FIFTH_WHEEL_LABELS[observation.state],
+      timestamp: observation.timestamp,
       delayed: false
+    };
+  }
+
+  function trailerPresentation(statusInfo, enrollment, nowMs) {
+    if (!fifthWheelConfigured(enrollment)) {
+      return unknownTrailerPresentation(false, null);
+    }
+    var observation = trailerObservation(statusInfo, enrollment, nowMs);
+    return observation && observation.trustworthy
+      ? knownTrailerPresentation(observation)
+      : unknownTrailerPresentation(true, observation && observation.timestamp);
+  }
+
+  function communicationContinuityBroken(communication) {
+    return !communication || [
+      "STALE",
+      "NOT_COMMUNICATING",
+      "OFFLINE_72_HOURS",
+      "UNKNOWN"
+    ].indexOf(communication.condition) !== -1;
+  }
+
+  function createCurrentTrailerStateLatch() {
+    var states = new Map();
+
+    function resolve(deviceId, statusInfo, enrollment, facility, nowMs) {
+      if (!deviceId || !fifthWheelConfigured(enrollment)) {
+        if (deviceId) {
+          states.delete(deviceId);
+        }
+        return unknownTrailerPresentation(false, null);
+      }
+      var existing = states.get(deviceId) || null;
+      var communication = communicationPresentation(statusInfo, facility, nowMs);
+      if (communicationContinuityBroken(communication)) {
+        if (!existing || !existing.invalidatedAt) {
+          states.set(deviceId, {
+            state: normalization.FIFTH_WHEEL_STATES.UNKNOWN,
+            timestamp: null,
+            invalidatedAt: new Date(nowMs).toISOString()
+          });
+        }
+        return unknownTrailerPresentation(true, null);
+      }
+
+      var observation = trailerObservation(statusInfo, enrollment, nowMs);
+      if (observation && !observation.trustworthy) {
+        var malformedMs = Date.parse(observation.timestamp);
+        var existingMs = existing && existing.timestamp
+          ? Date.parse(existing.timestamp) : -Infinity;
+        if (!existing || malformedMs >= existingMs) {
+          states.set(deviceId, {
+            state: normalization.FIFTH_WHEEL_STATES.UNKNOWN,
+            timestamp: null,
+            invalidatedAt: observation.timestamp
+          });
+          return unknownTrailerPresentation(true, observation.timestamp);
+        }
+      }
+
+      if (observation && observation.trustworthy) {
+        var observationMs = Date.parse(observation.timestamp);
+        var invalidatedMs = existing && existing.invalidatedAt
+          ? Date.parse(existing.invalidatedAt) : -Infinity;
+        var latchedMs = existing && existing.timestamp
+          ? Date.parse(existing.timestamp) : -Infinity;
+        if (observationMs > invalidatedMs && observationMs >= latchedMs) {
+          existing = {
+            state: observation.state,
+            timestamp: observation.timestamp,
+            invalidatedAt: null
+          };
+          states.set(deviceId, existing);
+        }
+      }
+
+      if (existing && existing.state !== normalization.FIFTH_WHEEL_STATES.UNKNOWN) {
+        return knownTrailerPresentation(existing);
+      }
+      return unknownTrailerPresentation(true, null);
+    }
+
+    return {
+      clear: function () { states.clear(); },
+      resolve: resolve,
+      snapshot: function () { return new Map(states); }
     };
   }
 
@@ -843,12 +928,12 @@
   }
 
   function unprofiledViewModel(device, enrollment, facility, range, records,
-    statusInfo, nowMs, driverContext, retainedState, moveState) {
+    statusInfo, nowMs, driverContext, retainedState, moveState, currentTrailer) {
     var communication = communicationPresentation(statusInfo, facility, nowMs);
     var current = currentOperationalPresentation(
       statusInfo, enrollment, facility, nowMs, retainedState
     );
-    var trailer = trailerPresentation(statusInfo, enrollment, nowMs);
+    var trailer = currentTrailer || trailerPresentation(statusInfo, enrollment, nowMs);
     var currentSpeed = statusInfo && statusInfo.currentSpeedMph !== null
       ? statusInfo.currentSpeedMph : null;
     var fuelLevel = currentMetric(
@@ -1041,17 +1126,17 @@
   }
 
   function buildViewModel(device, enrollment, facility, range, records, statusInfo,
-    nowMs, driverContext, engineHealth, retainedState, moveState) {
+    nowMs, driverContext, engineHealth, retainedState, moveState, currentTrailer) {
     if (enrollment && enrollment.liveOperationsNative === true) {
       return unprofiledViewModel(
         device, enrollment, facility, range, records, statusInfo, nowMs,
-        driverContext, retainedState, moveState
+        driverContext, retainedState, moveState, currentTrailer
       );
     }
     if (!enrollment || enrollment.profileConfigured === false) {
       return unprofiledViewModel(
         device, enrollment, facility, range, records, statusInfo, nowMs,
-        driverContext, retainedState, moveState
+        driverContext, retainedState, moveState, currentTrailer
       );
     }
     var hasFifthWheel = fifthWheelConfigured(enrollment);
@@ -1137,7 +1222,7 @@
     var current = currentOperationalPresentation(
       statusInfo, enrollment, facility, nowMs, retainedState
     );
-    var trailer = trailerPresentation(statusInfo, enrollment, nowMs);
+    var trailer = currentTrailer || trailerPresentation(statusInfo, enrollment, nowMs);
     if (hasFifthWheel && !trailer.supported && currentCoupling
       && currentCoupling.value !== normalization.FIFTH_WHEEL_STATES.UNKNOWN) {
       var trailerDelayed = nowMs - Date.parse(currentCoupling.timestamp)
@@ -1244,6 +1329,7 @@
       moveDayKey: null,
       moveWindow: null,
       moveLoadMetrics: null,
+      trailerStateLatch: createCurrentTrailerStateLatch(),
       cursors: {}
     };
 
@@ -1340,13 +1426,22 @@
         resetMoveState(today);
       }
       return cache.devices.map(function (device) {
+        var enrollment = cache.enrollments.get(device.deviceId);
+        var statusInfo = cache.statusByDevice.get(device.deviceId) || null;
+        var currentTrailer = cache.trailerStateLatch.resolve(
+          device.deviceId,
+          statusInfo,
+          enrollment,
+          cache.facility,
+          nowMs
+        );
         var model = buildViewModel(
           device,
-          cache.enrollments.get(device.deviceId),
+          enrollment,
           cache.facility,
           cache.range,
           cache.recordsByDevice.get(device.deviceId) || [],
-          cache.statusByDevice.get(device.deviceId) || null,
+          statusInfo,
           nowMs,
           {
             events: cache.driverEventsByDevice.get(device.deviceId) || [],
@@ -1354,7 +1449,8 @@
           },
           cache.engineHealthByDevice.get(device.deviceId) || null,
           cache.lastOperationalStateByDevice.get(device.deviceId) || null,
-          cache.moveStateByDevice.get(device.deviceId) || null
+          cache.moveStateByDevice.get(device.deviceId) || null,
+          currentTrailer
         );
         if (model.operationalState !== "UNAVAILABLE"
           && model.operationalStateEvidenceAt) {
@@ -1576,6 +1672,7 @@
         cache.moveDayKey = null;
         cache.moveWindow = null;
         cache.moveLoadMetrics = null;
+        cache.trailerStateLatch.clear();
         return {
           ok: true,
           code: "configured-empty-facility",
@@ -1646,6 +1743,7 @@
       cache.moveDayKey = null;
       cache.moveWindow = null;
       cache.moveLoadMetrics = null;
+      cache.trailerStateLatch.clear();
       cache.cursors = {};
       resetMoveState(operationsMoveWindow(facility, nowMs));
       try {
@@ -1892,6 +1990,7 @@
         cache.moveDayKey = null;
         cache.moveWindow = null;
         cache.moveLoadMetrics = null;
+        cache.trailerStateLatch.clear();
         cache.cursors = {};
       },
       snapshot: function () {
@@ -1910,6 +2009,7 @@
     STATE_LABELS: STATE_LABELS,
     buildViewModel: buildViewModel,
     communicationPresentation: communicationPresentation,
+    createCurrentTrailerStateLatch: createCurrentTrailerStateLatch,
     currentOperationalPresentation: currentOperationalPresentation,
     createOperationsDataSource: createOperationsDataSource,
     currentShiftRange: currentShiftRange,
