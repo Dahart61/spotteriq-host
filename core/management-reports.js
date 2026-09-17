@@ -5,14 +5,17 @@
     ? require("./driver-attribution") : root.SIQ_DRIVER_ATTRIBUTION;
   var engineHoursReport = typeof module === "object" && module.exports
     ? require("./engine-hours-report") : root.SIQ_ENGINE_HOURS_REPORT;
-  var api = factory(driverAttribution, engineHoursReport);
+  var speedEvidence = typeof module === "object" && module.exports
+    ? require("./speed-evidence") : root.SIQ_SPEED_EVIDENCE;
+  var api = factory(driverAttribution, engineHoursReport, speedEvidence);
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   }
   root.SIQ_MANAGEMENT_REPORTS = api;
 }(typeof globalThis !== "undefined" ? globalThis : this, function (
   driverAttribution,
-  engineHoursReport
+  engineHoursReport,
+  speedEvidence
 ) {
   "use strict";
 
@@ -199,6 +202,7 @@
       engineHoursDelta: unit.engineHoursDelta,
       maxSpeedMph: unit.maxSpeedMph,
       peakSpeedTimestamp: unit.peakSpeedTimestamp,
+      excludedSpeedPeaks: unit.speedEvidence ? unit.speedEvidence.excludedPeaks : [],
       speedActivityCount: Number.isFinite(unit.maxSpeedMph) ? 1 : 0,
       totalDistanceMiles: null,
       coupledDistanceMiles: null,
@@ -433,6 +437,9 @@
           return;
         }
         var segment = intervalAt(segments, new Date(instant).toISOString());
+        if (!speedEvidence.running(speedEvidence.intervalAt(unit.operatingIntervals || [], instant))) {
+          return;
+        }
         if (segment && segment.driverId && drivers.has(segment.driverId)) {
           var driver = drivers.get(segment.driverId);
           driver.maxSpeedMph = driver.maxSpeedMph === null
@@ -456,9 +463,16 @@
           driverDisplayName: peakSegment && peakSegment.driverDisplayName || null,
           driverLabel: driverLabel(peakSegment),
           peakSpeedMph: unit.maxSpeedMph,
+          condition: "Operational",
           peakTimestamp: unit.peakSpeedTimestamp
         });
       }
+      (unit.speedEvidence && unit.speedEvidence.excludedPeaks || []).forEach(function (observation) {
+        speedEvents.push({deviceDisplayName: device.displayName, driverDisplayName: null,
+          driverLabel: "Unattributed", peakSpeedMph: observation.mph,
+          peakTimestamp: observation.timestamp, condition: observation.condition,
+          movementEvidence: observation.evidence || null});
+      });
       trucks.push(finalizeTruck(truck));
     });
 

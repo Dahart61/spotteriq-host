@@ -9,7 +9,9 @@
     ? require("./timeline") : root.SIQ_TIMELINE;
   var operationalStates = typeof module === "object" && module.exports
     ? require("./operational-states") : root.SIQ_OPERATIONAL_STATES;
-  var api = factory(timezone, engineHoursReport, timeline, operationalStates);
+  var speedEvidence = typeof module === "object" && module.exports
+    ? require("./speed-evidence") : root.SIQ_SPEED_EVIDENCE;
+  var api = factory(timezone, engineHoursReport, timeline, operationalStates, speedEvidence);
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   }
@@ -18,7 +20,8 @@
   timezone,
   engineHoursReport,
   timeline,
-  operationalStates
+  operationalStates,
+  speedEvidence
 ) {
   "use strict";
 
@@ -741,11 +744,18 @@
       var instant = recordTime(record);
       return instant >= speedStartMs && instant < speedEndMs;
     }).map(function (record) {
-      return { timestamp: new Date(recordTime(record)).toISOString(), mph: speedMph(record) };
+      return { timestamp: new Date(recordTime(record)).toISOString(), mph: speedMph(record),
+        stored: Boolean(recordId(record)) };
     }).filter(function (observation) { return observation.mph !== null; });
-    var peakSpeed = speedObservations.length ? speedObservations.reduce(function (maximum, observation) {
-      return observation.mph > maximum.mph ? observation : maximum;
-    }) : null;
+    var speedAssessment = speedEvidence.analyze(speedObservations, activity, window,
+      Object.assign({}, options && options.possibleTowing, {
+        // RPM fallback may support existing state accounting, but cannot replace
+        // native ignition authority for the stronger Possible Towing inference.
+        engineOffAuthority: storedSamples(data.ignition, function (record) {
+          return booleanLevel(valueOf(record, "data", "Data"));
+        }).length > 0
+      }));
+    var peakSpeed = speedAssessment.operationalPeak;
     var maxSpeedMph = peakSpeed ? peakSpeed.mph : null;
     var classifiedMinutes = Math.max(0, window.durationMinutes - buckets.stoppedMinutes);
     var moveRecords = capable
@@ -772,6 +782,7 @@
       productiveFuelGallons: productiveFuel,
       gallonsPerProductiveHour: null,
       maxSpeedMph: maxSpeedMph,
+      speedEvidence: speedAssessment,
       peakSpeedTimestamp: peakSpeed ? peakSpeed.timestamp : null,
       verifiedMoveRecords: moveRecords,
       coupledAverageMovingSpeedMph: buckets.coupledMovingMinutes > 0

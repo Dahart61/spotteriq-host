@@ -197,6 +197,12 @@
     });
   }
 
+  function movementEvidenceLabel(event) {
+    var evidence = event.movementEvidence;
+    return evidence ? "Engine Off · " + evidence.observationCount + " observations over "
+      + evidence.durationSeconds + "s" : "";
+  }
+
   function reportData(result, reportType) {
     var reports = reportsFor(result);
     var timeZone = result.window.timezone;
@@ -282,13 +288,14 @@
     }
     if (reportType === "speed") {
       return {
-        headers: ["Unit", "Driver", "Peak Speed", "Peak Timestamp"],
+        headers: ["Unit", "Driver", "Peak Speed", "Peak Timestamp", "Condition", "Movement Evidence"],
         rows: reports.speedActivity.map(function (event) {
           return [
             event.deviceDisplayName,
             event.driverLabel,
             available(event.peakSpeedMph, speed),
-            timestamp(event.peakTimestamp, timeZone)
+            timestamp(event.peakTimestamp, timeZone), event.condition || "Operational",
+            movementEvidenceLabel(event)
           ];
         })
       };
@@ -840,17 +847,19 @@
       var summary = byId("siq-report-live-summary");
       summary.replaceChildren();
       summary.appendChild(element("p", "siq-live-report-note",
-        "Observed speed is operating evidence. Without a configured policy, Speed Activity is not classified as a violation."));
+        "Operational peaks require Engine Running. Possible Towing is inferred from Engine Off and corroborated movement. Other GPS evidence remains Unattributed. Speed Activity is not classified as a violation."));
       if (!reports.speedActivity.length) {
         return empty("No Speed Activity observations in this reporting window.");
       }
       return table([
         { label: "Unit" }, { label: "Driver" },
-        { label: "Peak Speed", numeric: true }, { label: "Peak Timestamp" }
+        { label: "Peak Speed", numeric: true }, { label: "Peak Timestamp" },
+        { label: "Condition" }, { label: "Movement Evidence" }
       ], reports.speedActivity.slice(0, MAX_RENDER_ROWS).map(function (event) {
         return [event.deviceDisplayName, event.driverLabel,
           speed(event.peakSpeedMph),
-          timestamp(event.peakTimestamp, result.window.timezone)];
+          timestamp(event.peakTimestamp, result.window.timezone), event.condition || "Operational",
+          movementEvidenceLabel(event)];
       }));
     }
     function render(result, nextContext, reportType) {

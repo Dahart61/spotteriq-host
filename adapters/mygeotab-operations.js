@@ -40,10 +40,14 @@
   var powertrainFaults = typeof module === "object" && module.exports
     ? require("../core/powertrain-faults")
     : root.SIQ_POWERTRAIN_FAULTS;
+  var speedEvidence = typeof module === "object" && module.exports
+    ? require("../core/speed-evidence") : root.SIQ_SPEED_EVIDENCE;
+  var operationalStates = typeof module === "object" && module.exports
+    ? require("../core/operational-states") : root.SIQ_OPERATIONAL_STATES;
   var api = factory(client, normalization, diagnostics, timezone, shifts,
     shiftPerformance, timeline,
     moves, moveSummaries, driverEvents, driverAttribution, mygeotabFaults,
-    powertrainFaults);
+    powertrainFaults, speedEvidence, operationalStates);
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   }
@@ -61,7 +65,9 @@
   driverEvents,
   driverAttribution,
   mygeotabFaults,
-  powertrainFaults
+  powertrainFaults,
+  speedEvidence,
+  operationalStates
 ) {
   "use strict";
 
@@ -445,6 +451,15 @@
       && statusInfo.isCommunicating === true;
     var recentlyNonCommunicating = communicationWithinRetention
       && statusInfo.isCommunicating === false;
+    var canonical = operationalStates.classifyOperationalState({jawSensorInstalled: false,
+      engineOnRpmThreshold: DEFAULT_ENGINE_ON_RPM_THRESHOLD,
+      movementSpeedThresholdMph: DEFAULT_MOVEMENT_THRESHOLD_MPH}, {
+      ignition: ignition, rpm: rpm, speed: speed,
+      communication: {condition: !speed.fresh || !communicating ? "STALE" : "CURRENT"}
+    });
+    var movement = speedEvidence.observeLive(retainedState && retainedState.movementObservations,
+      {timestamp: speed.timestamp, mph: speed.value}, canonical.state === "ENGINE_OFF",
+      enrollment && enrollment.possibleTowing);
 
     function signalAgeMs(signal) {
       var timestamp = Date.parse(signal && signal.timestamp);
@@ -483,6 +498,8 @@
         ? statusInfo.currentStateDurationMs : null;
       return {
         state: state,
+        possibleTowing: state === "OFF" && movement.confirmed,
+        movementObservations: movement.observations,
         label: STATE_LABELS[state],
         delayed: false,
         evidenceAt: confirmedAt || null,
@@ -510,6 +527,8 @@
       : driving.fresh && driving.value === false;
     var freshRpmRunning = rpm.fresh && rpm.value >= DEFAULT_ENGINE_ON_RPM_THRESHOLD;
     if (freshMoving) {
+      if (canonical.state === "ENGINE_OFF") { return result("OFF", evidenceAt([speed, ignition, rpm])); }
+      if (canonical.state !== "ENGINE_ON_MOVING") { return result("UNAVAILABLE", null); }
       return result("MOVING", evidenceAt([
         speed.fresh ? speed : null,
         !speed.fresh && driving.fresh ? driving : null
@@ -742,6 +761,7 @@
   }
 
   function operatingModePresentation(current, trailer, capable) {
+    if (current && current.possibleTowing) { return "Possible Towing"; }
     var base = current && STATE_LABELS[current.state]
       ? STATE_LABELS[current.state] : STATE_LABELS.UNAVAILABLE;
     return base;
@@ -991,6 +1011,8 @@
       profileStatus: null,
       groupReconciliation: null,
       operationalState: current.state,
+      possibleTowing: current.possibleTowing === true,
+      movementObservations: current.movementObservations || [],
       operationalStateLabel: operatingModePresentation(
         current, trailer, trailer.supported
       ),
@@ -1037,7 +1059,7 @@
       warningMessage: null,
       engineHealth: powertrainFaults.unavailable("CAPABILITY_DISABLED"),
       affectedMetrics: []
-    }, currentDriverProjection(statusInfo));
+    }, currentDriverProjection(statusInfo, current));
   }
 
   function driverEnabled(enrollment) {
@@ -1111,8 +1133,8 @@
     };
   }
 
-  function currentDriverProjection(statusInfo) {
-    var displayName = statusInfo && statusInfo.currentDriverDisplayName;
+  function currentDriverProjection(statusInfo, current) {
+    var displayName = !(current && current.possibleTowing) && statusInfo && statusInfo.currentDriverDisplayName;
     var identified = typeof displayName === "string" && displayName.trim();
     return {
       driverIdentificationEnabled: true,
@@ -1264,6 +1286,8 @@
         }
         : enrollment.groupReconciliation || null,
       operationalState: state,
+      possibleTowing: current.possibleTowing === true,
+      movementObservations: current.movementObservations || [],
       operationalStateLabel: operatingModePresentation(
         current, trailer, hasFifthWheel
       ),
@@ -1306,7 +1330,7 @@
         enrollment.powertrainFaultMonitoringEnabled === true
           ? "FAULT_DATA_NOT_LOADED" : "CAPABILITY_DISABLED"
       )
-    }, currentDriverProjection(statusInfo));
+    }, currentDriverProjection(statusInfo, current));
   }
 
   function createOperationsDataSource(configuration) {
@@ -1452,10 +1476,15 @@
           cache.moveStateByDevice.get(device.deviceId) || null,
           currentTrailer
         );
+        if (model.operationalState === "UNAVAILABLE") {
+          var retained = cache.lastOperationalStateByDevice.get(device.deviceId);
+          if (retained) { retained.movementObservations = []; }
+        }
         if (model.operationalState !== "UNAVAILABLE"
           && model.operationalStateEvidenceAt) {
           cache.lastOperationalStateByDevice.set(device.deviceId, {
             state: model.operationalState,
+            movementObservations: model.movementObservations || [],
             evidenceAt: model.operationalStateEvidenceAt
           });
         }

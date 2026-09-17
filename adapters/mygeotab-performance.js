@@ -59,7 +59,7 @@
       "calculatedEngineHours"
     ]),
     moves: Object.freeze(["fifthWheel", "speed", "driverEvents"]),
-    speed: Object.freeze(["speed", "driverEvents"])
+    speed: Object.freeze(["rpm", "ignition", "speed", "driverEvents"])
   });
 
   function staleError() {
