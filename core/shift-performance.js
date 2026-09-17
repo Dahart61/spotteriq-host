@@ -733,7 +733,14 @@
     var engineHours = engineHoursReport.cumulativeDeltaHours(data.engineHours);
     var idleFuelGallons = fuelMeters.idle;
     var productiveFuel = fuelMeters.productive;
-    var speedObservations = sorted(data.speed).map(function (record) {
+    // Keep lookback evidence for state reconstruction; only actual observations
+    // in the half-open report window may supply a reportable speed peak.
+    var speedStartMs = Date.parse(window.startUtc);
+    var speedEndMs = Date.parse(window.endUtc);
+    var speedObservations = sorted(data.speed).filter(function (record) {
+      var instant = recordTime(record);
+      return instant >= speedStartMs && instant < speedEndMs;
+    }).map(function (record) {
       return { timestamp: new Date(recordTime(record)).toISOString(), mph: speedMph(record) };
     }).filter(function (observation) { return observation.mph !== null; });
     var peakSpeed = speedObservations.length ? speedObservations.reduce(function (maximum, observation) {
