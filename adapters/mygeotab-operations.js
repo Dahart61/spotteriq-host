@@ -454,7 +454,13 @@
     var canonical = operationalStates.classifyOperationalState({jawSensorInstalled: false,
       engineOnRpmThreshold: DEFAULT_ENGINE_ON_RPM_THRESHOLD,
       movementSpeedThresholdMph: DEFAULT_MOVEMENT_THRESHOLD_MPH}, {
-      ignition: ignition, rpm: rpm, speed: speed,
+      // DeviceStatusInfo supplies the latest change-logged diagnostics. Reuse
+      // the existing retention policy while a current device is communicating;
+      // requiring a new ignition transition every two minutes loses running trucks.
+      ignition: Object.assign({}, ignition, {fresh: ignition.fresh
+        || communicating && retainedSignalIsTrusted(ignition)}),
+      rpm: Object.assign({}, rpm, {fresh: rpm.fresh
+        || communicating && retainedSignalIsTrusted(rpm)}), speed: speed,
       communication: {condition: !speed.fresh || !communicating ? "STALE" : "CURRENT"}
     });
     var movement = speedEvidence.observeLive(retainedState && retainedState.movementObservations,
@@ -508,8 +514,7 @@
           ? new Date(Date.parse(statusTimestamp) - durationMs).toISOString() : null,
         engineRunning: state === "IDLING" ? true
           : state === "OFF" ? false
-            : state === "MOVING" && rpm.fresh
-              ? rpm.value >= DEFAULT_ENGINE_ON_RPM_THRESHOLD : null,
+            : state === "MOVING" ? canonical.state === "ENGINE_ON_MOVING" : null,
         ignitionOn: ignition.value,
         rpm: rpm.value
       };
@@ -520,10 +525,10 @@
     }
 
     var freshMoving = statusInfo && statusInfo.isCommunicating !== false && (speed.fresh
-      ? speed.value >= DEFAULT_MOVEMENT_THRESHOLD_MPH
+      ? speed.value > DEFAULT_MOVEMENT_THRESHOLD_MPH
       : driving.fresh && driving.value === true);
     var freshStationary = speed.fresh
-      ? speed.value < DEFAULT_MOVEMENT_THRESHOLD_MPH
+      ? speed.value <= DEFAULT_MOVEMENT_THRESHOLD_MPH
       : driving.fresh && driving.value === false;
     var freshRpmRunning = rpm.fresh && rpm.value >= DEFAULT_ENGINE_ON_RPM_THRESHOLD;
     if (freshMoving) {
