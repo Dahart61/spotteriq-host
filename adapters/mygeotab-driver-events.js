@@ -27,6 +27,7 @@
   var CLEAR_TYPES = Object.freeze(["ResetDriver"]);
   var SOURCE = "MyGeotab DriverChange";
   var RESULT_LIMIT = 50000;
+  var TRIP_RESULT_LIMIT = 25000;
   var DRIVER_CHUNK_MS = 7 * 24 * 60 * 60 * 1000;
 
   function assertCurrent(options) {
@@ -105,6 +106,87 @@
         isIncluded: true
       }
     }];
+  }
+
+  function tripCall(request) {
+    var range = exactRange(request);
+    return ["Get", {
+      typeName: "Trip",
+      search: { deviceSearch: { id: range.deviceId }, fromDate: range.fromDate,
+        toDate: range.toDate, includeOverlappedTrips: true },
+      resultsLimit: TRIP_RESULT_LIMIT,
+      sort: { sortBy: "start", sortDirection: "asc" },
+      propertySelector: { fields: ["id", "device", "driver", "start", "nextTripStart"], isIncluded: true }
+    }];
+  }
+
+  function nativeTripScope(record, deviceId) {
+    var actualDevice = normalization.referenceId(rawValue(record, "device", "Device"));
+    var driverId = normalization.referenceId(rawValue(record, "driver", "Driver"));
+    var startUtc = normalization.exactIso(rawValue(record, "start", "Start"));
+    var endUtc = normalization.exactIso(rawValue(record, "nextTripStart", "NextTripStart"));
+    if (actualDevice !== deviceId || !driverId || isUnknownDriverId(driverId)
+      || !startUtc || !endUtc || Date.parse(endUtc) <= Date.parse(startUtc)
+      || endUtc.slice(0, 4) === "9999") { return null; }
+    return { deviceId: actualDevice, driverId: driverId, startUtc: startUtc, endUtc: endUtc };
+  }
+
+  async function resolveTripScopes(api, events, requests, options) {
+    var required = requests.filter(function (range) {
+      return events.some(function (event) {
+        return event.deviceId === range.deviceId && event.sourceType === "TripDriver"
+          && event.action === "ASSIGNED";
+      });
+    }).map(function (range) {
+      var start = Date.parse(range.fromDate);
+      events.forEach(function (event) {
+        var instant = Date.parse(event.timestamp);
+        if (event.deviceId === range.deviceId && event.sourceType === "TripDriver"
+          && instant >= Date.parse(options && options.sessionHistoryStartUtc)) {
+          start = Math.min(start, instant);
+        }
+      });
+      return Object.assign({}, range, { fromDate: new Date(start).toISOString() });
+    });
+    if (!required.length) { return events; }
+    var batches;
+    try {
+      batches = await fetchRangesBounded(api, chunkRanges(required), options || {}, true);
+    } catch (error) {
+      if (error && error.code === "REPORT_REQUEST_STALE") { throw error; }
+      // Failure affects TripDriver attribution only, never vehicle activity.
+      return events;
+    }
+    var scopes = [];
+    var incomplete = new Set();
+    var ranges = chunkRanges(required);
+    batches.forEach(function (batch, index) {
+      (batch || []).forEach(function (record) {
+        var scope = nativeTripScope(record, ranges[index].deviceId);
+        if (!scope) { incomplete.add(ranges[index].deviceId); }
+        if (scope && !scopes.some(function (prior) {
+          return prior.deviceId === scope.deviceId && prior.driverId === scope.driverId
+            && prior.startUtc === scope.startUtc && prior.endUtc === scope.endUtc;
+        })) { scopes.push(scope); }
+      });
+    });
+    return events.map(function (event) {
+      if (event.sourceType !== "TripDriver" || event.action !== "ASSIGNED") { return event; }
+      var instant = Date.parse(event.timestamp);
+      var deviceScopes = scopes.filter(function (scope) { return scope.deviceId === event.deviceId; });
+      var candidates = deviceScopes.filter(function (scope) {
+        return Date.parse(scope.startUtc) <= instant && instant < Date.parse(scope.endUtc);
+      });
+      var requested = required.find(function (range) { return range.deviceId === event.deviceId; });
+      if (!candidates.length && !incomplete.has(event.deviceId)
+        && requested && instant >= Date.parse(requested.fromDate)) {
+        var next = deviceScopes.filter(function (scope) { return Date.parse(scope.startUtc) >= instant; })
+          .sort(function (a, b) { return Date.parse(a.startUtc) - Date.parse(b.startUtc); })[0];
+        candidates = next ? deviceScopes.filter(function (scope) { return scope.startUtc === next.startUtc; }) : [];
+      }
+      return Object.assign({}, event, { tripScope: candidates.length === 1
+        && candidates[0].driverId === event.driverId ? candidates[0] : null });
+    });
   }
 
   function normalizeDriverChange(record, allowedDeviceIds) {
@@ -227,9 +309,9 @@
     return result;
   }
 
-  async function fetchRangeComplete(api, range, options, depth) {
+  async function fetchRangeComplete(api, range, options, depth, trips) {
     assertCurrent(options);
-    var request = driverChangeCall(range);
+    var request = trips ? tripCall(range) : driverChangeCall(range);
     if (options && options.stats) { options.stats.apiCalls += 1; }
     var batch = await client.call(api, request[0], request[1]);
     assertCurrent(options);
@@ -238,7 +320,7 @@
         options.stats.maxRecordsPerCall, batch.length
       );
     }
-    if (batch.length < RESULT_LIMIT) {
+    if (batch.length < (trips ? TRIP_RESULT_LIMIT : RESULT_LIMIT)) {
       return batch;
     }
     var start = Date.parse(range.fromDate);
@@ -251,14 +333,14 @@
     var midpoint = new Date(start + Math.floor((end - start) / 2)).toISOString();
     var left = await fetchRangeComplete(api, {
       deviceId: range.deviceId, fromDate: range.fromDate, toDate: midpoint
-    }, options, depth + 1);
+    }, options, depth + 1, trips);
     var right = await fetchRangeComplete(api, {
       deviceId: range.deviceId, fromDate: midpoint, toDate: range.toDate
-    }, options, depth + 1);
+    }, options, depth + 1, trips);
     return left.concat(right);
   }
 
-  async function fetchRangesBounded(api, ranges, options) {
+  async function fetchRangesBounded(api, ranges, options, trips) {
     var batches = new Array(ranges.length);
     var next = 0;
     async function worker() {
@@ -266,7 +348,7 @@
         assertCurrent(options);
         var index = next;
         next += 1;
-        batches[index] = await fetchRangeComplete(api, ranges[index], options, 0);
+        batches[index] = await fetchRangeComplete(api, ranges[index], options, 0, trips);
         await new Promise(function (resolve) { setTimeout(resolve, 0); });
       }
     }
@@ -330,6 +412,9 @@
       });
     });
     events = dedupeEvents(events);
+    if (options && options.includeTripScopes) {
+      events = await resolveTripScopes(api, events, (requests || []).map(exactRange), options);
+    }
     var identities = await resolveIdentities(api, events, priorIdentities);
     assertCurrent(options);
     events = events.map(function (event) {
@@ -356,6 +441,10 @@
     CLEAR_TYPES: CLEAR_TYPES.slice(),
     DRIVER_CHUNK_MS: DRIVER_CHUNK_MS,
     RESULT_LIMIT: RESULT_LIMIT,
+    TRIP_RESULT_LIMIT: TRIP_RESULT_LIMIT,
+    tripCall: tripCall,
+    nativeTripScope: nativeTripScope,
+    resolveTripScopes: resolveTripScopes,
     SOURCE: SOURCE,
     dedupeEvents: dedupeEvents,
     driverChangeCall: driverChangeCall,

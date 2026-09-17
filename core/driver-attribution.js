@@ -13,6 +13,7 @@
     ASSIGNED: "ASSIGNED",
     CLEARED: "CLEARED"
   });
+  var ENGINE_OFF_TIMEOUT_MS = 120000;
 
   function exactMilliseconds(value, label) {
     if (typeof value !== "string" || !/(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
@@ -77,6 +78,7 @@
         ? event.driverDisplayName.trim() : null,
       source: event.source || null,
       sourceType: event.sourceType || null,
+      tripScope: event.tripScope || null,
       overlapSeed: event.overlapSeed === true,
       warningState: event.warningState || "NONE"
     };
@@ -106,7 +108,8 @@
     var signaturesByInstant = new Map();
     ordered.forEach(function (event) {
       var key = event.deviceId + "::" + event.timestamp;
-      var signature = event.action + "::" + (event.driverId || "");
+      var signature = event.action + "::" + (event.driverId || "")
+        + "::" + (event.sourceType === "TripDriver" ? "trip" : "continuous");
       if (signaturesByInstant.has(key)
         && signaturesByInstant.get(key) !== signature) {
         conflicts.add(key);
@@ -114,9 +117,17 @@
         signaturesByInstant.set(key, signature);
       }
     });
-    return ordered.filter(function (event) {
-      return !conflicts.has(event.deviceId + "::" + event.timestamp);
-    });
+    var cleared = new Set();
+    return ordered.map(function (event) {
+      var key = event.deviceId + "::" + event.timestamp;
+      if (!conflicts.has(key)) { return event; }
+      if (cleared.has(key)) { return null; }
+      cleared.add(key);
+      return Object.assign({}, event, {
+        action: ACTIONS.CLEARED, driverId: null, driverDisplayName: null,
+        warningState: "DRIVER_CONFLICT", tripScope: null
+      });
+    }).filter(Boolean);
   }
 
   function interval(start, end, state) {
@@ -203,6 +214,184 @@
       result.push(interval(cursor, range.end, state));
     }
     return result;
+  }
+
+  // Session reconstruction consumes the canonical operating timeline. Missing
+  // coverage is a continuity failure, never a fabricated Engine Off interval.
+  // An overlap seed is usable only when its entire session can be replayed.
+  function sessionIntervals(events, window, operatingIntervals) {
+    var range = windowRange(window);
+    var operating = (operatingIntervals || []).filter(function (item) {
+      return Number.isFinite(item.start) && Number.isFinite(item.end)
+        && item.start < item.end && item.start < range.end;
+    }).slice().sort(function (left, right) { return left.start - right.start; });
+    var start = Math.min(range.start, operating.length ? operating[0].start : range.start);
+    var relevant = normalizedEvents(events, Object.assign({}, window, {
+      startUtc: new Date(start).toISOString()
+    })).filter(function (event) { return Date.parse(event.timestamp) >= start; });
+    var eventIndex = 0;
+    var operatingIndex = 0;
+    var cursor = start;
+    var active = null;
+    var offSince = null;
+    var reason = "AUTHENTICATION_NOT_ESTABLISHED";
+    var result = [];
+
+    function clear(code) { active = null; reason = code; }
+    function assign(event) {
+      if (event.action === ACTIONS.CLEARED) {
+        clear(event.warningState === "DRIVER_CONFLICT" ? "DRIVER_CONFLICT" : "NATIVE_CLEAR");
+        return;
+      }
+      var tripStart = null;
+      var tripEnd = null;
+      if (event.sourceType === "TripDriver") {
+        var scope = event.tripScope;
+        try {
+          tripStart = exactMilliseconds(scope && scope.startUtc);
+          tripEnd = exactMilliseconds(scope && scope.endUtc);
+        } catch (error) { clear("TRIP_SCOPE_UNAVAILABLE"); return; }
+        if (!scope || scope.deviceId !== window.deviceId || scope.driverId !== event.driverId
+          || tripEnd <= Math.max(tripStart, cursor)) {
+          clear("TRIP_SCOPE_UNAVAILABLE"); return;
+        }
+      }
+      active = { event: event, activeFrom: Math.max(cursor, tripStart || cursor), end: tripEnd };
+      reason = "NONE";
+      if (offSince !== null) { offSince = cursor; }
+    }
+
+    while (cursor < range.end) {
+      while (operatingIndex < operating.length && operating[operatingIndex].end <= cursor) {
+        operatingIndex += 1;
+      }
+      var operatingAt = operating[operatingIndex];
+      var covered = operatingAt && operatingAt.start <= cursor;
+      var unknown = !covered || operatingAt.unavailable === true
+        || !(operatingAt.engineRunning === true || operatingAt.engineOff === true
+          || operatingAt.keyOn === true);
+      if (!unknown && operatingAt.engineOff === true) {
+        if (offSince === null) { offSince = cursor; }
+      } else { offSince = null; }
+      while (eventIndex < relevant.length && Date.parse(relevant[eventIndex].timestamp) <= cursor) {
+        assign(relevant[eventIndex]);
+        eventIndex += 1;
+      }
+      if (unknown) { clear("CONTINUITY_UNPROVEN"); }
+      if (active && active.end !== null && cursor >= active.end) { clear("TRIP_ENDED"); }
+      // If an off run ends at exactly 120 seconds, the running state above
+      // cancels this timer. Longer runs end attribution at the tolerance edge.
+      if (active && offSince !== null && cursor >= offSince + ENGINE_OFF_TIMEOUT_MS) {
+        clear("ENGINE_OFF_TIMEOUT");
+      }
+      var next = range.end;
+      if (operatingAt) { next = Math.min(next, covered ? operatingAt.end : operatingAt.start); }
+      if (eventIndex < relevant.length) { next = Math.min(next, Date.parse(relevant[eventIndex].timestamp)); }
+      if (active) {
+        if (active.end !== null) { next = Math.min(next, active.end); }
+        if (active.activeFrom > cursor) { next = Math.min(next, active.activeFrom); }
+        if (offSince !== null) { next = Math.min(next, offSince + ENGINE_OFF_TIMEOUT_MS); }
+      }
+      var event = active && cursor >= active.activeFrom ? active.event : null;
+      var clippedStart = Math.max(cursor, range.start);
+      if (next > clippedStart) {
+        var part = {
+          startUtc: new Date(clippedStart).toISOString(), endUtc: new Date(next).toISOString(),
+          driverId: event ? event.driverId : null,
+          driverDisplayName: event ? event.driverDisplayName : null,
+          label: event ? "Identified" : "Unattributed",
+          identifiedAt: event ? event.timestamp : null,
+          sourceEventId: event ? event.id : null, source: event ? event.source : null,
+          sourceType: event ? event.sourceType : null,
+          warningState: event ? event.warningState : reason,
+          attributionReason: event ? "NONE" : active ? "TRIP_NOT_STARTED" : reason
+        };
+        var previous = result[result.length - 1];
+        if (previous && previous.endUtc === part.startUtc && previous.driverId === part.driverId
+          && previous.sourceEventId === part.sourceEventId
+          && previous.attributionReason === part.attributionReason) {
+          previous.endUtc = part.endUtc;
+        } else { result.push(part); }
+      }
+      cursor = next;
+    }
+    return result;
+  }
+
+  function unionMinutes(segments) {
+    var ordered = (segments || []).map(function (segment) {
+      return { start: Date.parse(segment.startUtc), end: Date.parse(segment.endUtc) };
+    }).filter(function (part) { return part.start < part.end; })
+      .sort(function (a, b) { return a.start - b.start || a.end - b.end; });
+    var total = 0;
+    var end = -Infinity;
+    ordered.forEach(function (part) {
+      total += Math.max(0, part.end - Math.max(part.start, end));
+      end = Math.max(end, part.end);
+    });
+    return total / 60000;
+  }
+
+  // Sweep by driver and distinct device. Sequential truck changes are ordinary
+  // sessions; only the portions with two or more active trucks are ambiguous.
+  function resolveConcurrency(segments) {
+    var byDriver = new Map();
+    (segments || []).filter(function (part) { return part.driverId; }).forEach(function (part) {
+      if (!byDriver.has(part.driverId)) { byDriver.set(part.driverId, []); }
+      byDriver.get(part.driverId).push(part);
+    });
+    var overlaps = new Map();
+    byDriver.forEach(function (parts, driverId) {
+      var boundaries = [];
+      parts.forEach(function (part) {
+        boundaries.push({ time: Date.parse(part.startUtc), deviceId: part.deviceId, delta: 1 });
+        boundaries.push({ time: Date.parse(part.endUtc), deviceId: part.deviceId, delta: -1 });
+      });
+      boundaries.sort(function (a, b) { return a.time - b.time; });
+      var devices = new Map();
+      var ambiguous = [];
+      var index = 0;
+      while (index < boundaries.length) {
+        var time = boundaries[index].time;
+        while (index < boundaries.length && boundaries[index].time === time) {
+          var boundary = boundaries[index++];
+          var count = (devices.get(boundary.deviceId) || 0) + boundary.delta;
+          if (count) { devices.set(boundary.deviceId, count); } else { devices.delete(boundary.deviceId); }
+        }
+        if (devices.size > 1 && index < boundaries.length) {
+          ambiguous.push({ startUtc: new Date(time).toISOString(),
+            endUtc: new Date(boundaries[index].time).toISOString() });
+        }
+      }
+      overlaps.set(driverId, ambiguous);
+    });
+    var attributed = [];
+    (segments || []).forEach(function (part) {
+      var start = Date.parse(part.startUtc);
+      var end = Date.parse(part.endUtc);
+      var conflicts = (overlaps.get(part.driverId) || []).filter(function (item) {
+        return Date.parse(item.startUtc) < end && Date.parse(item.endUtc) > start;
+      });
+      var cuts = new Set([start, end]);
+      conflicts.forEach(function (item) {
+        cuts.add(Math.max(start, Date.parse(item.startUtc)));
+        cuts.add(Math.min(end, Date.parse(item.endUtc)));
+      });
+      var points = Array.from(cuts).sort(function (a, b) { return a - b; });
+      points.slice(0, -1).forEach(function (point, index) {
+        var ambiguous = conflicts.some(function (item) {
+          return Date.parse(item.startUtc) <= point && point < Date.parse(item.endUtc);
+        });
+        attributed.push(Object.assign({}, part, {
+          startUtc: new Date(point).toISOString(), endUtc: new Date(points[index + 1]).toISOString(),
+          durationMinutes: (points[index + 1] - point) / 60000
+        }, ambiguous ? {
+          driverId: null, driverDisplayName: null, driverLabel: "Unattributed", label: "Unattributed",
+          attributionReason: "CONCURRENT_ASSIGNMENTS", warningState: "CONCURRENT_ASSIGNMENTS"
+        } : {}));
+      });
+    });
+    return { segments: attributed, overlaps: overlaps };
   }
 
   function currentDriverContext(events, window, timestamp) {
@@ -304,6 +493,10 @@
 
   return {
     ACTIONS: ACTIONS,
+    ENGINE_OFF_TIMEOUT_MS: ENGINE_OFF_TIMEOUT_MS,
+    sessionIntervals: sessionIntervals,
+    unionMinutes: unionMinutes,
+    resolveConcurrency: resolveConcurrency,
     attributeTelemetry: attributeTelemetry,
     attributionIntervals: attributionIntervals,
     clipDriverSessions: clipDriverSessions,

@@ -247,6 +247,14 @@
         "Engine Running", "Moving", "Engine Running Stationary", "Utilization",
         "Max Observed Speed", "Trucks Operated"
       ];
+      if (reports.drivers.some(function (driver) { return driver.concurrentMinutes > 0; })) {
+        driverHeaders.push("Attribution context");
+        driverRows.forEach(function (row, index) {
+          row.push(reports.drivers[index].concurrentMinutes > 0
+            ? "Concurrent truck assignments: overlapping activity is Unattributed; Time on Truck counts shared time once."
+            : "");
+        });
+      }
       includeColumn(driverHeaders, driverRows, "Total Distance",
         reports.drivers.map(function (row) { return row.totalDistanceMiles; }), miles);
       includeColumn(driverHeaders, driverRows, "Trailer Coupled Distance",
@@ -651,6 +659,12 @@
           speed(driver.maxSpeedMph)];
       }, function (driver) {
         var content = element("div", "siq-report-detail-sections");
+        if (driver.concurrentMinutes > 0) {
+          content.appendChild(element("p", "siq-report-context",
+            "Concurrent truck assignments overlap for " + duration(driver.concurrentMinutes)
+            + ". Activity during those overlaps is Unattributed. Time on Truck counts shared time once."
+            + " Moves / Truck Hour is unavailable because attribution is incomplete."));
+        }
         content.append(
           detailGroup("Productivity", [
             ["Time on Truck", duration(driver.assignedMinutes)],

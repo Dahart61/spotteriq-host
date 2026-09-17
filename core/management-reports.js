@@ -72,10 +72,11 @@
       ? interval.driverDisplayName || "Identified driver" : "Unattributed";
   }
 
-  function timelineFor(device, data, window) {
-    return driverAttribution.attributionIntervals(
+  function timelineFor(device, data, window, unit) {
+    return driverAttribution.sessionIntervals(
       data && data.driverEvents || [],
-      Object.assign({}, window, { deviceId: device.deviceId })
+      Object.assign({}, window, { deviceId: device.deviceId }),
+      data && data.driverOperatingIntervals || unit && unit.operatingIntervals || []
     ).map(function (segment) {
       return Object.assign({}, segment, {
         deviceId: device.deviceId,
@@ -99,8 +100,7 @@
     if (exact) {
       return exact;
     }
-    var last = segments && segments[segments.length - 1];
-    return last && instant === Date.parse(last.endUtc) ? last : null;
+    return null;
   }
 
   function activityIntervals(unit) {
@@ -113,6 +113,7 @@
         end: interval.end,
         engineRunning: interval.engineRunning,
         moving: interval.moving,
+        stationary: interval.stationary,
         unavailable: interval.unavailable === true
       };
     });
@@ -131,6 +132,7 @@
             durationMinutes: (end - start) / 60000,
             engineRunning: vehicle.engineRunning,
             moving: vehicle.moving,
+            stationary: vehicle.stationary,
             driverId: driver.driverId,
             driverDisplayName: driver.driverDisplayName,
             driverLabel: driver.driverLabel
@@ -147,6 +149,8 @@
       driverDisplayName: segment.driverDisplayName,
       driverLabel: segment.driverLabel,
       assignedMinutes: 0,
+      assignmentSegments: [],
+      concurrentMinutes: 0,
       engineRunningMinutes: 0,
       movingMinutes: 0,
       stationaryMinutes: 0,
@@ -223,12 +227,13 @@
     }).forEach(function (item) {
       detail.engineRunningMinutes += item.engineRunning ? item.durationMinutes : 0;
       detail.movingMinutes += item.moving ? item.durationMinutes : 0;
-      detail.stationaryMinutes += item.engineRunning && !item.moving
+      detail.stationaryMinutes += item.stationary === true
         ? item.durationMinutes : 0;
     });
   }
 
   function finalizeDriver(driver) {
+    driver.assignedMinutes = driverAttribution.unionMinutes(driver.assignmentSegments);
     var trucks = Array.from(driver.trucks.values()).sort(function (left, right) {
       return left.displayName.localeCompare(right.displayName);
     });
@@ -236,13 +241,14 @@
       driverDisplayName: driver.driverDisplayName,
       driverLabel: driver.driverLabel,
       assignedMinutes: driver.assignedMinutes,
+      concurrentMinutes: driver.concurrentMinutes,
       engineRunningMinutes: driver.engineRunningMinutes,
       movingMinutes: driver.movingMinutes,
       stationaryMinutes: driver.stationaryMinutes,
       utilizationPercent: driver.engineRunningMinutes > 0
         ? driver.movingMinutes / driver.engineRunningMinutes * 100 : null,
       verifiedMoves: driver.verifiedMoves,
-      movesPerAssignedHour: driver.assignedMinutes > 0
+      movesPerAssignedHour: driver.assignedMinutes > 0 && driver.concurrentMinutes === 0
         ? driver.verifiedMoves / (driver.assignedMinutes / 60) : null,
       movesPerEngineRunningHour: driver.engineRunningMinutes > 0
         ? driver.verifiedMoves / (driver.engineRunningMinutes / 60) : null,
@@ -339,6 +345,17 @@
     var moveEvents = [];
     var speedEvents = [];
     var attributionSegments = [];
+    var assignmentSegments = [];
+    (devices || []).forEach(function (device) {
+      var unit = unitByDevice.get(device.deviceId);
+      if (unit) {
+        assignmentSegments = assignmentSegments.concat(timelineFor(
+          device, byDevice.get(device.deviceId) || {}, window, unit
+        ));
+      }
+    });
+    var concurrency = driverAttribution.resolveConcurrency(assignmentSegments);
+    attributionSegments = concurrency.segments;
 
     (devices || []).forEach(function (device) {
       var data = byDevice.get(device.deviceId) || {};
@@ -346,25 +363,28 @@
       if (!unit) {
         return;
       }
-      var segments = timelineFor(device, data, window);
+      var sessions = assignmentSegments.filter(function (part) { return part.deviceId === device.deviceId; });
+      var segments = attributionSegments.filter(function (part) { return part.deviceId === device.deviceId; });
       var attributed = attributedActivity(activityIntervals(unit), segments);
-      var truck = truckAccumulator(device, unit, segments);
-      attributionSegments = attributionSegments.concat(segments);
+      var truck = truckAccumulator(device, unit, sessions);
 
-      segments.filter(function (segment) {
+      sessions.filter(function (segment) {
         return Boolean(segment.driverId) && segment.durationMinutes > 0;
       }).forEach(function (segment) {
         if (!drivers.has(segment.driverId)) {
           drivers.set(segment.driverId, driverAccumulator(segment));
+          drivers.get(segment.driverId).concurrentMinutes = driverAttribution.unionMinutes(
+            concurrency.overlaps.get(segment.driverId)
+          );
         }
-        drivers.get(segment.driverId).assignedMinutes += segment.durationMinutes;
+        drivers.get(segment.driverId).assignmentSegments.push(segment);
       });
       drivers.forEach(function (driver) {
-        if (segments.some(function (segment) {
+        if (sessions.some(function (segment) {
           return segment.driverId === driver.driverId;
         })) {
           addDriverTruck(driver, truck, attributed);
-          driver.trucks.get(truck.deviceId).assignedMinutes = segments.filter(function (segment) {
+          driver.trucks.get(truck.deviceId).assignedMinutes = sessions.filter(function (segment) {
             return segment.driverId === driver.driverId;
           }).reduce(function (total, segment) {
             return total + segment.durationMinutes;
@@ -379,12 +399,12 @@
         var driver = drivers.get(item.driverId);
         driver.engineRunningMinutes += item.engineRunning ? item.durationMinutes : 0;
         driver.movingMinutes += item.moving ? item.durationMinutes : 0;
-        driver.stationaryMinutes += item.engineRunning && !item.moving
+        driver.stationaryMinutes += item.stationary === true
           ? item.durationMinutes : 0;
         var truckDriver = truck.drivers.get(item.driverId);
         truckDriver.engineRunningMinutes += item.engineRunning ? item.durationMinutes : 0;
         truckDriver.movingMinutes += item.moving ? item.durationMinutes : 0;
-        truckDriver.stationaryMinutes += item.engineRunning && !item.moving
+        truckDriver.stationaryMinutes += item.stationary === true
           ? item.durationMinutes : 0;
       });
 
@@ -466,6 +486,7 @@
     }).length;
     return {
       definitionVersion: 1,
+      assignmentSegments: assignmentSegments,
       attributionSegments: attributionSegments,
       drivers: finalizedDrivers,
       trucks: trucks,

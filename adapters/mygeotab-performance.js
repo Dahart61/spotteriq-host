@@ -673,6 +673,49 @@
     }
   }
 
+  async function hydrateDriverSessionEvidence(api, devices, byDevice, units, window, options) {
+    var sourcePlan = options && REPORT_SOURCE_PLANS[options.reportType];
+    var historyStartUtc = new Date(Date.parse(window.startUtc) - REPORT_HISTORY_LOOKBACK_MS).toISOString();
+    var unitByDevice = new Map(units.map(function (unit) { return [unit.deviceId, unit]; }));
+    await mapBounded(devices, options && options.maxConcurrency || DEFAULT_REPORT_CONCURRENCY,
+      async function (device) {
+        var data = byDevice.get(device.deviceId);
+        if (!data || !data.driverEvents.length) { return; }
+        var sessionData = Object.assign({}, data);
+        var missing = ["rpm", "ignition"].filter(function (source) {
+          return sourcePlan && sourcePlan.indexOf(source) === -1;
+        });
+        if (missing.length) {
+          // Moves/Speed keep their existing vehicle query plan and metrics.
+          // Additional engine evidence is used only by driver sessions.
+          try {
+            var specs = missing.map(function (source) {
+              return { deviceId: device.deviceId, source: source, startUtc: historyStartUtc,
+                endUtc: window.endUtc, call: statusDataCall(
+                  device.deviceId, DIAGNOSTICS[source], historyStartUtc, window.endUtc
+                ) };
+            });
+            var batches = await fetchSpecsBounded(api, specs, Object.assign({}, options, { maxConcurrency: 1 }));
+            missing.forEach(function (source, index) {
+              sessionData[source] = authorizedRecords(batches[index], device.deviceId);
+            });
+          } catch (error) {
+            if (error && error.code === "REPORT_REQUEST_STALE") { throw error; }
+            data.driverOperatingIntervals = [];
+            return;
+          }
+        }
+        var historyWindow = Object.assign({}, window, {
+          startUtc: historyStartUtc, endUtc: missing.length ? window.endUtc : window.startUtc
+        });
+        var history = shiftPerformance.activityIntervals(
+          shiftPerformance.buildReportTimeline(device, sessionData, historyWindow, options)
+        );
+        data.driverOperatingIntervals = missing.length ? history
+          : history.concat(unitByDevice.get(device.deviceId).operatingIntervals);
+      }, options);
+  }
+
   async function fetchShift(api, devices, window, options) {
     var adjustmentTimeoutMs = options
       && Number.isFinite(options.adjustmentTimeoutMs)
@@ -799,7 +842,8 @@
             };
           }),
           null,
-          options
+          Object.assign({}, options, { includeTripScopes: true,
+            sessionHistoryStartUtc: new Date(Date.parse(window.startUtc) - REPORT_HISTORY_LOOKBACK_MS).toISOString() })
         );
       } catch (error) {
         if (error && error.code === "REPORT_REQUEST_STALE") {
@@ -825,6 +869,8 @@
       }
     }
     assertCurrent(options);
+    await hydrateDriverSessionEvidence(api, devices || [], byDevice, units, window, options);
+    assertCurrent(options);
     var reports = managementReports.build(devices, byDevice, units, window);
     return {
       ok: true,
@@ -846,6 +892,7 @@
   }
 
   return {
+    hydrateDriverSessionEvidence: hydrateDriverSessionEvidence,
     ADJUSTMENT_TIMEOUT_MS: ADJUSTMENT_TIMEOUT_MS,
     DEFAULT_REPORT_CONCURRENCY: DEFAULT_REPORT_CONCURRENCY,
     DIAGNOSTICS: DIAGNOSTICS,
