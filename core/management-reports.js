@@ -220,6 +220,7 @@
         engineRunningMinutes: 0,
         movingMinutes: 0,
         stationaryMinutes: 0,
+        safelyAttributedMinutes: 0,
         verifiedMoves: 0,
         maxSpeedMph: null,
         totalDistanceMiles: null
@@ -229,6 +230,7 @@
     attributed.filter(function (item) {
       return item.driverId === driver.driverId;
     }).forEach(function (item) {
+      detail.safelyAttributedMinutes += item.durationMinutes;
       detail.engineRunningMinutes += item.engineRunning ? item.durationMinutes : 0;
       detail.movingMinutes += item.moving ? item.durationMinutes : 0;
       detail.stationaryMinutes += item.stationary === true
@@ -249,6 +251,9 @@
       engineRunningMinutes: driver.engineRunningMinutes,
       movingMinutes: driver.movingMinutes,
       stationaryMinutes: driver.stationaryMinutes,
+      idlePercent: driver.engineRunningMinutes > 0
+        ? driver.stationaryMinutes / driver.engineRunningMinutes * 100 : null,
+      safelyAttributedMinutes: sum(trucks, "safelyAttributedMinutes"),
       utilizationPercent: driver.engineRunningMinutes > 0
         ? driver.movingMinutes / driver.engineRunningMinutes * 100 : null,
       verifiedMoves: driver.verifiedMoves,
@@ -263,7 +268,9 @@
       bobtailDistanceMiles: null,
       bobtailSharePercent: null,
       averageCoupledMoveDistanceMiles: null,
-      trucksOperated: trucks.length,
+      trucksOperated: trucks.filter(function (truck) {
+        return truck.safelyAttributedMinutes > 0;
+      }).length,
       trucks: trucks
     };
   }
@@ -350,6 +357,10 @@
     var speedEvents = [];
     var attributionSegments = [];
     var assignmentSegments = [];
+    // Aggregate the same resolved canonical intersections, without creating a
+    // synthetic driver session or changing the attribution model.
+    var unattributed = { engineRunningMinutes: 0, movingMinutes: 0,
+      stationaryMinutes: 0, verifiedMoves: null, maxSpeedMph: null };
     (devices || []).forEach(function (device) {
       var unit = unitByDevice.get(device.deviceId);
       if (unit) {
@@ -371,6 +382,9 @@
       var segments = attributionSegments.filter(function (part) { return part.deviceId === device.deviceId; });
       var attributed = attributedActivity(activityIntervals(unit), segments);
       var truck = truckAccumulator(device, unit, sessions);
+      if (Number.isFinite(unit.moveCount) && unattributed.verifiedMoves === null) {
+        unattributed.verifiedMoves = 0;
+      }
 
       sessions.filter(function (segment) {
         return Boolean(segment.driverId) && segment.durationMinutes > 0;
@@ -398,6 +412,9 @@
 
       attributed.forEach(function (item) {
         if (!item.driverId || !drivers.has(item.driverId)) {
+          unattributed.engineRunningMinutes += item.engineRunning ? item.durationMinutes : 0;
+          unattributed.movingMinutes += item.moving ? item.durationMinutes : 0;
+          unattributed.stationaryMinutes += item.stationary === true ? item.durationMinutes : 0;
           return;
         }
         var driver = drivers.get(item.driverId);
@@ -419,6 +436,8 @@
           drivers.get(driverId).verifiedMoves += 1;
           drivers.get(driverId).trucks.get(device.deviceId).verifiedMoves += 1;
           truck.drivers.get(driverId).verifiedMoves += 1;
+        } else {
+          unattributed.verifiedMoves = (unattributed.verifiedMoves || 0) + 1;
         }
         moveEvents.push(Object.assign({}, move, {
           deviceDisplayName: device.displayName,
@@ -450,6 +469,9 @@
           var truckDriver = truck.drivers.get(segment.driverId);
           truckDriver.maxSpeedMph = truckDriver.maxSpeedMph === null
             ? mph : Math.max(truckDriver.maxSpeedMph, mph);
+        } else {
+          unattributed.maxSpeedMph = unattributed.maxSpeedMph === null
+            ? mph : Math.max(unattributed.maxSpeedMph, mph);
         }
       });
 
@@ -503,6 +525,7 @@
       assignmentSegments: assignmentSegments,
       attributionSegments: attributionSegments,
       drivers: finalizedDrivers,
+      unattributed: unattributed,
       trucks: trucks,
       moves: moveEvents,
       speedActivity: speedEvents,
