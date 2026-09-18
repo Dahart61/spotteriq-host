@@ -11,6 +11,39 @@
 
   var MAX_RENDER_ROWS = 500;
 
+  var DRIVER_SORTS = { name: "Name", assignedMinutes: "Time on Truck",
+    verifiedMoves: "Verified Moves", movesPerAssignedHour: "Moves / Truck Hour",
+    movingMinutes: "Moving", stationaryMinutes: "Idle", utilizationPercent: "Utilization" };
+
+  function selectDrivers(drivers, selection) {
+    selection = selection || {};
+    var query = String(selection.search || "").trim().toLocaleLowerCase();
+    var key = Object.prototype.hasOwnProperty.call(DRIVER_SORTS, selection.sort)
+      ? selection.sort : "name";
+    return (drivers || []).filter(function (driver) {
+      return (!Number.isFinite(driver.safelyAttributedMinutes) || driver.safelyAttributedMinutes > 0)
+        && driver.driverLabel.toLocaleLowerCase().includes(query)
+        && (selection.filter !== "active" || driver.engineRunningMinutes > 0 || driver.verifiedMoves > 0)
+        && (selection.filter !== "moves" || driver.verifiedMoves > 0);
+    }).slice().sort(function (left, right) {
+      var order = 0;
+      if (key !== "name") {
+        var a = Number.isFinite(left[key]) ? left[key] : -Infinity;
+        var b = Number.isFinite(right[key]) ? right[key] : -Infinity;
+        order = a === b ? 0 : a > b ? -1 : 1;
+      }
+      return order || left.driverLabel.localeCompare(right.driverLabel);
+    });
+  }
+
+  function driverSelectionLabel(selection) {
+    selection = selection || {};
+    return (selection.filter === "active" ? "Active" : selection.filter === "moves" ? "With Moves" : "All")
+      + (selection.search ? ' · Search: "' + selection.search + '"' : "")
+      + " · Sort: " + (DRIVER_SORTS[selection.sort] || "Name")
+      + (selection.sort && selection.sort !== "name" ? " (descending)" : " (A–Z)");
+  }
+
   function timeLabel(value) {
     var parts = value.split(":");
     var hour = Number(parts[0]);
@@ -285,7 +318,7 @@
       + evidence.durationSeconds + "s" : "";
   }
 
-  function reportData(result, reportType) {
+  function reportData(result, reportType, driverSelection) {
     var reports = reportsFor(result);
     var timeZone = result.window.timezone;
     if (reportType === "overview") {
@@ -316,6 +349,7 @@
       return { headers: ["Metric", "Value"], rows: overviewRows };
     }
     if (reportType === "drivers") {
+      reports = Object.assign({}, reports, { drivers: selectDrivers(reports.drivers, driverSelection) });
       var driverRows = reports.drivers.map(function (driver) {
         return [
           driver.driverLabel,
@@ -332,7 +366,7 @@
       });
       var driverHeaders = [
         "Driver", "Time on Truck", "Verified Moves", "Moves / Truck Hour",
-        "Engine Running", "Moving", "Engine Running Stationary", "Utilization",
+        "Engine Running", "Moving", "Idle", "Utilization",
         "Max Observed Speed", "Trucks Operated"
       ];
       if (reports.drivers.some(function (driver) { return driver.concurrentMinutes > 0; })) {
@@ -439,8 +473,8 @@
     return values.map(csvEscape).join(",");
   }
 
-  function csvDocument(result, context, reportType) {
-    var data = reportData(result, reportType);
+  function csvDocument(result, context, reportType, driverSelection) {
+    var data = reportData(result, reportType, driverSelection);
     var lines = [
       csvLine(["Customer", context.customer.displayName]),
       csvLine(["Facility", context.facility.displayName]),
@@ -452,6 +486,18 @@
       csvLine(data.headers)
     ];
     data.rows.forEach(function (row) { lines.push(csvLine(row)); });
+    if (reportType === "drivers") {
+      var unattributed = reportsFor(result).unattributed;
+      lines.splice(6, 0, csvLine(["Driver selection", driverSelectionLabel(driverSelection)]));
+      if (unattributed) {
+        lines.push("", csvLine(["Unattributed Activity"]),
+          csvLine(["Activity recorded without a verified driver attribution."]),
+          csvLine(["Verified Moves", "Moving", "Idle", "Engine Running", "Max Observed Speed"]),
+          csvLine([available(unattributed.verifiedMoves, String), duration(unattributed.movingMinutes),
+            duration(unattributed.stationaryMinutes), duration(unattributed.engineRunningMinutes),
+            speed(unattributed.maxSpeedMph)]));
+      }
+    }
     return lines.join("\r\n") + "\r\n";
   }
 
@@ -491,6 +537,8 @@
       || (typeof globalThis !== "undefined" ? globalThis : null);
     var printing = false;
     var exporting = false;
+    var driverSelection = { search: "", filter: "all", sort: "name" };
+    var syncDetails = new WeakMap();
 
     function byId(id) { return document.getElementById(id); }
     function element(tag, className, value) {
@@ -548,6 +596,7 @@
     }
     function clear() {
       context = null;
+      driverSelection = { search: "", filter: "all", sort: "name" };
       byId("siq-report-live-status").textContent = "";
       byId("siq-report-live-results").hidden = true;
       byId("siq-report-live-summary").replaceChildren();
@@ -658,7 +707,10 @@
           var classes = [header.numeric ? "siq-live-report-numeric" : "",
             header.emphasized ? "siq-engine-hours-emphasis" : ""]
             .filter(Boolean).join(" ");
-          row.appendChild(element("td", classes, value));
+          var valueCell = element("td", classes);
+          if (value && value.nodeType) { valueCell.appendChild(value); }
+          else { valueCell.textContent = value; }
+          row.appendChild(valueCell);
         });
         var detailsCell = element("td");
         var disclosure = element("details", "siq-report-details");
@@ -666,7 +718,7 @@
         disclosure.appendChild(details(record));
         if (fullWidthDetails) {
           disclosure.classList.add("siq-report-details--full-width");
-          disclosure.addEventListener("toggle", function () {
+          var syncDisclosure = function () {
             var open = disclosure.open;
             Array.prototype.slice.call(row.children, 0, -1).forEach(function (cell) {
               cell.hidden = open;
@@ -674,7 +726,9 @@
             detailsCell.colSpan = open ? headers.length + 1 : 1;
             disclosure.querySelector("summary").textContent = open
               ? "Hide details" : "View details";
-          });
+          };
+          syncDetails.set(disclosure, syncDisclosure);
+          disclosure.addEventListener("toggle", syncDisclosure);
         }
         detailsCell.appendChild(disclosure);
         row.appendChild(detailsCell);
@@ -730,75 +784,131 @@
       return contextBlock;
     }
     function renderDrivers(reports) {
-      byId("siq-report-live-summary").replaceChildren(
-        metric("Active Drivers", String(reports.drivers.length))
-      );
-      if (!reports.drivers.length) {
-        return empty("No historically attributed drivers in this reporting window.");
+      byId("siq-report-live-summary").replaceChildren();
+      var section = element("section", "siq-driver-report");
+      var controls = element("div", "siq-driver-controls");
+      function control(label, node) {
+        var field = element("label", "siq-driver-control");
+        field.append(element("span", "", label), node);
+        controls.appendChild(field);
+        return node;
       }
+      var search = control("Search drivers", element("input"));
+      search.type = "search";
+      search.placeholder = "Search drivers...";
+      search.value = driverSelection.search;
+      var filter = control("Show", element("select"));
+      [["all", "All"], ["active", "Active"], ["moves", "With Moves"]].forEach(function (pair) {
+        var option = element("option", "", pair[1]); option.value = pair[0]; filter.appendChild(option);
+      });
+      filter.value = driverSelection.filter;
+      filter.title = "Active: Engine Running or Verified Moves in safely attributed activity.";
+      var sort = control("Sort by", element("select"));
+      Object.keys(DRIVER_SORTS).forEach(function (key) {
+        var option = element("option", "", DRIVER_SORTS[key]); option.value = key; sort.appendChild(option);
+      });
+      sort.value = driverSelection.sort;
+      var count = element("p", "siq-driver-count");
+      count.setAttribute("role", "status");
+      var selectionNote = element("p", "siq-driver-selection-note");
+      var list = element("div", "siq-driver-list");
+      function update() {
+        driverSelection = { search: search.value, filter: filter.value, sort: sort.value };
+        var visible = selectDrivers(reports.drivers, driverSelection);
+        count.textContent = visible.length + " of " + selectDrivers(reports.drivers).length + " drivers";
+        selectionNote.textContent = "Named drivers: " + driverSelectionLabel(driverSelection)
+          + ". Unattributed Activity covers the full loaded window.";
+        list.replaceChildren(visible.length ? driverTable(visible)
+          : empty("No drivers match this selection."));
+      }
+      search.addEventListener("input", update);
+      filter.addEventListener("change", update);
+      sort.addEventListener("change", update);
+      controls.appendChild(count);
+      section.append(controls, selectionNote);
+      if (reports.unattributed) {
+        var u = reports.unattributed;
+        var unattributed = element("aside", "siq-driver-unattributed");
+        unattributed.setAttribute("aria-label", "Unattributed Activity");
+        unattributed.append(element("h3", "", "Unattributed Activity"),
+          element("p", "", "Activity recorded without a verified driver attribution."));
+        var metrics = element("div", "siq-driver-unattributed-metrics");
+        [["Verified Moves", Number.isFinite(u.verifiedMoves) ? String(u.verifiedMoves) : "Unavailable"],
+          ["Moving", duration(u.movingMinutes)], ["Idle", duration(u.stationaryMinutes)],
+          ["Engine Running", duration(u.engineRunningMinutes)], ["Max Observed Speed", speed(u.maxSpeedMph)]]
+          .forEach(function (item) { metrics.appendChild(detailMetric(item[0], item[1])); });
+        unattributed.appendChild(metrics);
+        section.appendChild(unattributed);
+      }
+      section.appendChild(list);
+      update();
+      return section;
+    }
+    function driverTable(drivers) {
       var headers = [
         { label: "Driver" }, { label: "Time on Truck", numeric: true },
         { label: "Verified Moves", numeric: true },
         { label: "Moves / Truck Hour", numeric: true },
-        { label: "Moving", numeric: true },
-        { label: "Utilization", numeric: true },
-        { label: "Max Observed Speed", numeric: true }
+        { label: "Moving", numeric: true }, { label: "Idle", numeric: true },
+        { label: "Utilization", numeric: true }, { label: "Max Observed Speed", numeric: true }
       ];
-      return expandable(reports.drivers, headers, function (driver) {
+      var wrapper = expandable(drivers, headers, function (driver) {
+        var idle = element("span");
+        idle.appendChild(element("span", "siq-driver-idle-desktop", duration(driver.stationaryMinutes)));
+        var activity = element("span", "siq-driver-activity-mobile");
+        activity.append(element("span", "", "Moving " + duration(driver.movingMinutes)),
+          element("span", "", "Idle " + duration(driver.stationaryMinutes)));
+        idle.appendChild(activity);
         return [driver.driverLabel, duration(driver.assignedMinutes),
           String(driver.verifiedMoves), decimal(driver.movesPerAssignedHour),
-          duration(driver.movingMinutes), percent(driver.utilizationPercent),
-          speed(driver.maxSpeedMph)];
+          duration(driver.movingMinutes), idle,
+          percent(driver.utilizationPercent), speed(driver.maxSpeedMph)];
       }, function (driver) {
         var content = element("div", "siq-report-detail-sections");
+        content.appendChild(element("h4", "siq-driver-detail-name", driver.driverLabel));
         if (driver.concurrentMinutes > 0) {
           content.appendChild(element("p", "siq-report-context",
             "Concurrent truck assignments overlap for " + duration(driver.concurrentMinutes)
             + ". Activity during those overlaps is Unattributed. Time on Truck counts shared time once."
             + " Moves / Truck Hour is unavailable because attribution is incomplete."));
         }
-        content.append(
-          detailGroup("Productivity", [
-            ["Time on Truck", duration(driver.assignedMinutes)],
-            ["Verified Moves", String(driver.verifiedMoves)],
-            ["Moves / Truck Hour", decimal(driver.movesPerAssignedHour)],
-            ["Moves / Engine-Running Hour", decimal(driver.movesPerEngineRunningHour)],
-            ["Moving Time", duration(driver.movingMinutes)],
-            ["Utilization", percent(driver.utilizationPercent)]
-          ]),
-          detailGroup("Work Profile", [
-            ["Trucks Operated", String(driver.trucksOperated)],
-            ["Total Distance", Number.isFinite(driver.totalDistanceMiles)
-              ? miles(driver.totalDistanceMiles) : null],
-            ["Trailer Coupled Distance", Number.isFinite(driver.coupledDistanceMiles)
-              ? miles(driver.coupledDistanceMiles) : null],
-            ["Bobtail Distance", Number.isFinite(driver.bobtailDistanceMiles)
-              ? miles(driver.bobtailDistanceMiles) : null]
-          ]),
-          detailGroup("Efficiency / Operating Time", [
-            ["Engine Running", duration(driver.engineRunningMinutes)],
-            ["Engine Running \u00b7 Stationary", duration(driver.stationaryMinutes)],
-            ["Moving", duration(driver.movingMinutes)]
-          ]),
-          detailGroup("Operating Activity", [
-            ["Max Observed Speed", speed(driver.maxSpeedMph)],
-            ["Speed Activity Records", String(driver.speedActivityCount)]
-          ])
-        );
-        if (driver.trucks.length) {
-          content.appendChild(element("h4", "siq-report-detail-table-title",
-            "Trucks Operated"));
+        content.appendChild(detailGroup("Summary", [
+          ["Time on Truck", duration(driver.assignedMinutes)],
+          ["Verified Moves", String(driver.verifiedMoves)],
+          ["Moves / Truck Hour", decimal(driver.movesPerAssignedHour)],
+          ["Moving", duration(driver.movingMinutes)], ["Idle", duration(driver.stationaryMinutes)],
+          ["Idle %", percent(driver.engineRunningMinutes > 0
+            ? driver.stationaryMinutes / driver.engineRunningMinutes * 100 : null)],
+          ["Engine Running", duration(driver.engineRunningMinutes)],
+          ["Utilization", percent(driver.utilizationPercent)],
+          ["Max Observed Speed", speed(driver.maxSpeedMph)],
+          ["Trucks Operated", String(driver.trucksOperated)]
+        ]));
+        content.appendChild(element("p", "siq-live-report-note",
+          "Idle is Engine Running · Stationary during valid driver attribution. Idle % uses attributed Engine Running time."));
+        var trucks = driver.trucks.filter(function (truck) {
+          return !Number.isFinite(truck.safelyAttributedMinutes) || truck.safelyAttributedMinutes > 0;
+        });
+        if (trucks.length) {
+          content.appendChild(element("h4", "siq-report-detail-table-title", "Truck Breakdown"));
           content.appendChild(table([
             { label: "Unit" }, { label: "Time on Truck", numeric: true },
-            { label: "Moving", numeric: true },
-            { label: "Verified Moves", numeric: true }
-          ], driver.trucks.map(function (truck) {
-            return [truck.displayName, duration(truck.assignedMinutes),
-              duration(truck.movingMinutes), String(truck.verifiedMoves)];
+            { label: "Verified Moves", numeric: true }, { label: "Moving", numeric: true },
+            { label: "Idle", numeric: true }, { label: "Utilization", numeric: true },
+            { label: "Max Observed Speed", numeric: true }
+          ], trucks.map(function (truck) {
+            return [truck.displayName, duration(truck.assignedMinutes), String(truck.verifiedMoves),
+              duration(truck.movingMinutes), duration(truck.stationaryMinutes),
+              percent(truck.engineRunningMinutes > 0 ? truck.movingMinutes / truck.engineRunningMinutes * 100 : null),
+              speed(truck.maxSpeedMph)];
           })));
         }
         return content;
-      });
+      }, true);
+      wrapper.classList.add("siq-driver-table");
+      wrapper.tabIndex = 0;
+      wrapper.setAttribute("aria-label", "Driver summaries; scroll horizontally for more columns");
+      return wrapper;
     }
     function renderTrucks(reports) {
       byId("siq-report-live-summary").replaceChildren(
@@ -1098,6 +1208,9 @@
           + " (" + result.window.timezone + ")";
         document.querySelectorAll(".siq-report-details[open]").forEach(function (details) {
           details.open = false;
+          // The toggle event is asynchronous; restore full-width summary cells
+          // before the browser captures the printed table.
+          if (reportType === "drivers" && syncDetails.has(details)) { syncDetails.get(details)(); }
         });
         try {
           windowObject.print();
@@ -1116,7 +1229,7 @@
         var objectUrl = null;
         try {
           var blob = new windowObject.Blob([
-            "\uFEFF", csvDocument(result, nextContext, reportType)
+            "\uFEFF", csvDocument(result, nextContext, reportType, driverSelection)
           ], { type: "text/csv;charset=utf-8" });
           objectUrl = windowObject.URL.createObjectURL(blob);
           var link = document.createElement("a");
@@ -1168,6 +1281,7 @@
     meterUnavailableNote: meterUnavailableNote,
     meterTimestamp: meterTimestamp,
     reportData: reportData,
+    selectDrivers: selectDrivers,
     reportFilename: reportFilename
   };
 }));
