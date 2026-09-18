@@ -802,6 +802,50 @@
       value: activity,
       enumerable: false
     });
+    // Temporary, explicitly opted-in read-only audit of evidence already loaded.
+    // Remove before the final Engine Off correction release.
+    if (typeof location !== "undefined"
+      && /(?:\?|&)siqEngineOffAudit=1(?:&|$)/.test(location.search)
+      && ["b4C", "b48"].indexOf(device.deviceId) !== -1
+      && window.startUtc === "2026-09-18T04:00:00.000Z"
+      && window.endUtc === "2026-09-18T14:33:00.000Z") {
+      try {
+        var auditEvidence = {};
+        ["ignition", "rpm", "speed"].forEach(function (channel) {
+          auditEvidence[channel] = (data[channel] || []).map(function (record) {
+            return {
+              id: recordId(record),
+              dateTime: valueOf(record, "dateTime", "DateTime"),
+              data: valueOf(record, "data", "Data"),
+              speed: valueOf(record, "speed", "Speed"),
+              stored: Boolean(recordId(record))
+            };
+          });
+        });
+        var audit = JSON.stringify({
+          device: device,
+          window: window,
+          capability: reportCapability(device, options),
+          continuityMs: HISTORICAL_CONTINUITY_MAX_GAP_MS,
+          sources: { ignition: "DiagnosticIgnitionId", rpm: "DiagnosticEngineSpeedId", speed: "LogRecord" },
+          boundarySeed: null,
+          evidence: auditEvidence,
+          timeline: operatingTimeline,
+          metrics: Object.assign({}, buckets, {
+            moveCount: unit.moveCount, fuelGallons: unit.fuelGallons,
+            idleFuelGallons: unit.idleFuelGallons, maxSpeedMph: unit.maxSpeedMph
+          })
+        });
+        for (var auditOffset = 0; auditOffset < audit.length; auditOffset += 6000) {
+          console.info("SIQ_ENGINE_OFF_AUDIT " + JSON.stringify({
+            deviceId: device.deviceId, offset: auditOffset, length: audit.length,
+            chunk: audit.slice(auditOffset, auditOffset + 6000)
+          }));
+        }
+      } catch (auditError) {
+        console.warn("SIQ_ENGINE_OFF_AUDIT failed: " + auditError.message);
+      }
+    }
     return unit;
   }
 
