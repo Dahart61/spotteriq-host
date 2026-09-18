@@ -466,10 +466,20 @@
   }
 
   function historicalIgnitionSamples(ignitionRecords, evidenceRecords, continuityMs) {
-    var events = storedSamples(ignitionRecords, function (record) {
-      return booleanLevel(valueOf(record, "data", "Data"));
-    }).map(function (sample) {
-      return { timestamp: sample.timestamp, value: sample.value, ignition: true };
+    var nativeByTime = new Map();
+    sorted(ignitionRecords).filter(function (record) { return Boolean(recordId(record)); })
+      .forEach(function (record) {
+        var timestamp = new Date(recordTime(record)).toISOString();
+        var value = booleanLevel(valueOf(record, "data", "Data"));
+        // Malformed or contradictory stored authority must clear the latch,
+        // rather than silently extending the preceding OFF state.
+        if (nativeByTime.has(timestamp) && nativeByTime.get(timestamp) !== value) {
+          value = null;
+        }
+        nativeByTime.set(timestamp, value);
+      });
+    var events = Array.from(nativeByTime.entries()).map(function (entry) {
+      return { timestamp: entry[0], value: entry[1], ignition: true };
     });
     storedSamples(evidenceRecords, function () { return true; }).forEach(function (sample) {
       events.push({ timestamp: sample.timestamp, ignition: false });
@@ -489,6 +499,9 @@
       }
       if (event.ignition) {
         currentIgnition = event.value;
+        if (currentIgnition === null) {
+          samples.push({ timestamp: event.timestamp, value: null, invalid: true });
+        }
       }
       if (currentIgnition !== null) {
         samples.push({ timestamp: event.timestamp, value: currentIgnition });
@@ -561,10 +574,13 @@
     var logRecords = data && data.speed || [];
     var capability = reportCapability(device, options);
     var storedEvidence = (data && data.rpm || []).concat(logRecords);
-    var nativeIgnition = storedSamples(data && data.ignition, function (record) {
-      return booleanLevel(valueOf(record, "data", "Data"));
+    var nativeIgnition = sorted(data && data.ignition).filter(function (record) {
+      return Boolean(recordId(record));
     });
     capability.historicalIgnitionAuthority = nativeIgnition.length > 0;
+    if (capability.historicalIgnitionAuthority) {
+      capability.historicalOffContinuityMs = HISTORICAL_CONTINUITY_MAX_GAP_MS;
+    }
     return timeline.buildOperationalTimeline({
       capability: capability,
       startUtc: window.startUtc,

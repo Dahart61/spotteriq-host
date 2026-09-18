@@ -119,7 +119,10 @@
         );
       }
       var milliseconds = exactMilliseconds(sample.timestamp, channel + " sample timestamp");
-      var value = validateChannelValue(channel, sample.value);
+      // The historical ignition adapter can explicitly invalidate its latch.
+      // Ordinary null/malformed input remains rejected by the normal validator.
+      var invalid = channel === "ignition" && sample.invalid === true && sample.value === null;
+      var value = invalid ? null : validateChannelValue(channel, sample.value);
       var key = String(milliseconds);
       if (byTimestamp.has(key) && !valuesEqual(byTimestamp.get(key).value, value)) {
         throw new TimelineInputError(
@@ -132,20 +135,24 @@
           }
         );
       }
-      byTimestamp.set(key, {
+      var normalized = {
         timestamp: new Date(milliseconds).toISOString(),
         timestampMs: milliseconds,
         value: value
-      });
+      };
+      if (invalid) { normalized.invalid = true; }
+      byTimestamp.set(key, normalized);
     });
 
     return Array.from(byTimestamp.values()).sort(function (left, right) {
       return left.timestampMs - right.timestampMs;
     }).map(function (sample) {
-      return {
+      var result = {
         timestamp: sample.timestamp,
         value: sample.value
       };
+      if (sample.invalid) { result.invalid = true; }
+      return result;
     });
   }
 

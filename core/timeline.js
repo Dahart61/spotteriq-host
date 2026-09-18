@@ -43,6 +43,7 @@
         effectiveTimestampMs: startMilliseconds,
         sourceTimestampMs: Date.parse(seed.timestamp),
         value: seed.value,
+        invalid: seed.invalid === true,
         priority: 0
       });
     } else {
@@ -52,6 +53,7 @@
           effectiveTimestampMs: Date.parse(prior.timestamp),
           sourceTimestampMs: Date.parse(prior.timestamp),
           value: prior.value,
+          invalid: prior.invalid === true,
           priority: 1
         });
       }
@@ -64,6 +66,7 @@
           effectiveTimestampMs: milliseconds,
           sourceTimestampMs: milliseconds,
           value: sample.value,
+          invalid: sample.invalid === true,
           priority: 1
         });
       }
@@ -74,7 +77,7 @@
     });
   }
 
-  function effectiveSignal(records, atMilliseconds, freshnessMilliseconds) {
+  function effectiveSignal(records, atMilliseconds, freshnessMilliseconds, offContinuityMs) {
     var effective = null;
     var low = 0;
     var high = records.length - 1;
@@ -96,7 +99,13 @@
       };
     }
 
-    var fresh = atMilliseconds < effective.sourceTimestampMs + freshnessMilliseconds;
+    if (effective.invalid) {
+      return { value: null, fresh: false, status: "INVALID",
+        sourceTimestamp: new Date(effective.sourceTimestampMs).toISOString() };
+    }
+    var lifetime = effective.value === false && offContinuityMs
+      ? offContinuityMs : freshnessMilliseconds;
+    var fresh = atMilliseconds < effective.sourceTimestampMs + lifetime;
     return {
       value: fresh ? effective.value : null,
       fresh: fresh,
@@ -122,6 +131,7 @@
 
   function buildBoundaries(channelRecords, capability, startMilliseconds, endMilliseconds) {
     var boundaries = new Set([startMilliseconds, endMilliseconds]);
+    var continuity = historicalOffContinuity(capability);
     Object.keys(channelRecords).forEach(function (channel) {
       var freshnessField = telemetry.CHANNELS[channel].capabilityFreshnessName;
       var freshnessMilliseconds = capability[freshnessField];
@@ -134,6 +144,15 @@
         if (expiration > startMilliseconds && expiration < endMilliseconds) {
           boundaries.add(expiration);
         }
+        // Native OFF is bounded by historical continuity, not sampled freshness.
+        // Include that boundary even when no later observation arrives.
+        if (continuity && (channel === "communication"
+          || channel === "ignition" && record.value === false)) {
+          var continuityEnd = record.sourceTimestampMs + continuity;
+          if (continuityEnd > startMilliseconds && continuityEnd < endMilliseconds) {
+            boundaries.add(continuityEnd);
+          }
+        }
       });
     });
     return Array.from(boundaries).sort(function (left, right) {
@@ -141,11 +160,20 @@
     });
   }
 
+  function historicalOffContinuity(capability) {
+    return capability.historicalIgnitionAuthority === true
+      && Number.isFinite(capability.historicalOffContinuityMs)
+      && capability.historicalOffContinuityMs > 0
+      ? capability.historicalOffContinuityMs : null;
+  }
+
   function signalSnapshot(channelRecords, capability, atMilliseconds) {
+    var offContinuityMs = historicalOffContinuity(capability);
     var ignition = effectiveSignal(
       channelRecords.ignition,
       atMilliseconds,
-      capability.ignitionFreshnessMs
+      capability.ignitionFreshnessMs,
+      offContinuityMs
     );
     var rpm = effectiveSignal(
       channelRecords.rpm,
@@ -168,7 +196,8 @@
     var communication = communicationSignal(
       channelRecords.communication,
       atMilliseconds,
-      capability.communicationFreshnessMs
+      ignition.fresh && ignition.value === false && offContinuityMs
+        ? offContinuityMs : capability.communicationFreshnessMs
     );
     return {
       ignition: ignition,
