@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SpotterIQ by Fleetsource</title>
-  <link rel="stylesheet" href="styles.css?v=4.0.0-operations-ux1">
+  <link rel="stylesheet" href="styles.css?v=4.0.0-driver-productivity2">
 </head>
 <body>
   <div class="siq-app" data-theme="dark">
@@ -166,34 +166,25 @@
                 <h2 class="siq-section-title" id="siq-unit-board-title">Unit Board</h2>
                 <span class="siq-board-window" id="siq-operations-window-label">Completed Moves · Today so far</span>
               </div>
-              <div class="siq-board-controls">
-                <div class="siq-board-search">
-                  <input id="siq-board-search" type="search" placeholder="Search units..." aria-label="Search units or drivers" autocomplete="off">
-                  <button id="siq-board-search-clear" type="button" aria-label="Clear unit search" hidden>Clear</button>
-                </div>
-                <div class="siq-board-filters" role="group" aria-label="Unit board filters">
-                  <button class="siq-filter-button siq-filter-button--active" type="button" data-board-filter="all" aria-pressed="true">All <span data-filter-count>0</span></button>
-                  <button class="siq-filter-button" type="button" data-board-filter="inUse" aria-pressed="false">In Use <span data-filter-count>0</span></button>
-                  <button class="siq-filter-button" type="button" data-board-filter="moving" aria-pressed="false">Moving <span data-filter-count>0</span></button>
-                  <button class="siq-filter-button" type="button" data-board-filter="idling" aria-pressed="false" title="Engine Running · Stationary">Stationary <span data-filter-count>0</span></button>
-                  <button class="siq-filter-button" type="button" data-board-filter="off" aria-pressed="false">Engine Off <span data-filter-count>0</span></button>
-                  <button class="siq-filter-button" type="button" data-board-filter="coupled" aria-pressed="false">Coupled <span data-filter-count>0</span></button>
-                </div>
+              <div class="siq-board-filters" role="group" aria-label="Unit board filters">
+                <button class="siq-filter-button siq-filter-button--active" type="button" data-board-filter="all" aria-pressed="true">All states</button>
+                <button class="siq-filter-button" type="button" data-board-filter="moving" aria-pressed="false">Moving</button>
+                <button class="siq-filter-button" type="button" data-board-filter="idling" aria-pressed="false">Engine Running · Stationary</button>
+                <button class="siq-filter-button" type="button" data-board-filter="off" aria-pressed="false">Engine Off</button>
+                <button class="siq-filter-button" type="button" data-board-filter="coupled" aria-pressed="false">Trailer Coupled</button>
               </div>
             </div>
-            <p class="siq-board-status" id="siq-board-status" role="status" aria-live="polite" aria-atomic="true">Showing 0 units</p>
 
             <div class="siq-board-grid" role="table" aria-label="SpotterIQ unit board">
               <div class="siq-board-head" role="row">
-                <div role="columnheader" aria-sort="ascending"><button type="button" data-board-sort="unit">Unit <span data-sort-arrow aria-hidden="true">▲</span></button></div>
-                <div role="columnheader" aria-sort="none"><button type="button" data-board-sort="state">Operating Mode <span data-sort-arrow aria-hidden="true"></span></button></div>
-                <div role="columnheader" aria-sort="none"><button type="button" data-board-sort="moves">Completed Moves <span data-sort-arrow aria-hidden="true"></span></button></div>
-                <div role="columnheader" aria-sort="none"><button type="button" data-board-sort="speed">Speed <span data-sort-arrow aria-hidden="true"></span></button></div>
-                <div role="columnheader" aria-sort="none"><button type="button" data-board-sort="report" title="Ascending: freshest first. Descending: oldest first.">Last Report <span data-sort-arrow aria-hidden="true"></span></button></div>
+                <div role="columnheader">Unit</div>
+                <div role="columnheader">Operating Mode</div>
+                <div role="columnheader"><span>Completed</span><span>Moves</span></div>
+                <div role="columnheader">Speed</div>
+                <div role="columnheader">Last Report</div>
               </div>
               <div class="siq-board-body" id="siq-unit-board-body"></div>
             </div>
-            <p class="siq-empty-state" id="siq-board-no-matches" hidden>No units match. Clear search or choose All states.</p>
           </section>
 
           <aside class="siq-detail-drawer" id="siq-detail-drawer" aria-labelledby="siq-detail-title">
@@ -568,7 +559,7 @@
   <script src="controllers/operations-controller.js?v=4.0.0-operations-moves1"></script>
   <script src="controllers/performance-controller.js?v=4.0.0-state-continuity2"></script>
   <script src="controllers/reports-controller.js?v=4.0.0-report-range1"></script>
-  <script src="views/operations-view.js?v=4.0.0-operations-ux1"></script>
+  <script src="views/operations-view.js?v=4.0.0-operations-moves2"></script>
   <script src="views/performance-view.js?v=4.0.0-cumulative-idle1"></script>
   <script src="views/reports-view.js?v=4.0.0-driver-productivity2"></script>
   <script src="views/commissioning-diagnostics.js"></script>

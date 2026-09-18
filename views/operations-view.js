@@ -73,80 +73,6 @@
     return Object.is(left, right);
   }
 
-  // Presentation only: consume the approved current row model without deriving states.
-  var unitCollator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
-  var FILTER_LABELS = {
-    all: "All states", inUse: "In Use", moving: "Moving",
-    idling: "Engine Running · Stationary", off: "Engine Off", coupled: "Trailer Coupled"
-  };
-  var SORT_LABELS = {
-    unit: "Unit", state: "Operating Mode", moves: "Completed Moves",
-    speed: "Speed", report: "Last Report"
-  };
-
-  function matchesBoardFilter(model, filter) {
-    if (filter === "inUse") {
-      return model.operationalState === "MOVING" || model.operationalState === "IDLING";
-    }
-    if (filter === "coupled") {
-      // The adapter's qualifier already applies capability and current evidence gates.
-      return model.operationalStateQualifierLabel === "w/ Trailer";
-    }
-    var states = { moving: "MOVING", idling: "IDLING", off: "OFF" };
-    return !states[filter] || model.operationalState === states[filter];
-  }
-
-  function compareUnits(left, right) {
-    return unitCollator.compare(left.displayName || left.nativeDisplayName || "",
-      right.displayName || right.nativeDisplayName || "")
-      || unitCollator.compare(String(left.deviceId), String(right.deviceId));
-  }
-
-  function boardPresentation(models, options) {
-    var source = models || [];
-    var settings = options || {};
-    var filter = settings.filter || "all";
-    var search = String(settings.search || "").trim().toLocaleLowerCase();
-    var sort = settings.sort || "unit";
-    var direction = settings.direction === "descending" ? -1 : 1;
-    var counts = {};
-    Object.keys(FILTER_LABELS).forEach(function (key) {
-      counts[key] = source.filter(function (model) {
-        return matchesBoardFilter(model, key);
-      }).length;
-    });
-    var rows = source.filter(function (model) {
-      return matchesBoardFilter(model, filter) && (!search || [
-        model.displayName, model.nativeDisplayName, model.fleetsourceUnitNumber,
-        model.customerUnitNumber, model.currentDriverDisplayName
-      ].some(function (value) {
-        return value !== null && value !== undefined
-          && String(value).toLocaleLowerCase().indexOf(search) !== -1;
-      }));
-    });
-    var stateOrder = { MOVING: 0, IDLING: 1, OFF: 2 };
-    function sortValue(model) {
-      if (sort === "state") {
-        return Object.prototype.hasOwnProperty.call(stateOrder, model.operationalState)
-          ? stateOrder[model.operationalState] : 3;
-      }
-      if (sort === "moves") { return model.completedMoves; }
-      if (sort === "speed") { return model.currentSpeedMph; }
-      // Ascending report age means freshest first. Never compare rendered age text.
-      return model.lastCommunicationAt ? -Date.parse(model.lastCommunicationAt) : null;
-    }
-    rows.sort(function (left, right) {
-      if (sort === "unit") { return direction * compareUnits(left, right); }
-      var a = sortValue(left);
-      var b = sortValue(right);
-      var aKnown = Number.isFinite(a);
-      var bKnown = Number.isFinite(b);
-      if (aKnown !== bKnown) { return aKnown ? -1 : 1; }
-      return (aKnown ? direction * (a - b) : 0) || compareUnits(left, right);
-    });
-    return { rows: rows, counts: counts, total: source.length };
-  }
-
   function operationsSummaryModel(models, facility) {
     var source = Array.isArray(models) ? models : [];
     var completed = source.filter(function (model) {
@@ -256,9 +182,6 @@
     var selectedDeviceId = null;
     var detailRefs = null;
     var activeFilter = "all";
-    var boardSearch = "";
-    var boardSort = "unit";
-    var boardSortDirection = "ascending";
     var bound = false;
     var controller = null;
     var domRows = new Map();
@@ -366,6 +289,22 @@
       refs.currentDriverDisplayName.classList.toggle(
         "siq-unit-row__driver-value--unassigned", !assigned
       );
+    }
+
+    function rowMatches(model) {
+      if (activeFilter === "moving") {
+        return model.operationalState === "MOVING";
+      }
+      if (activeFilter === "idling") {
+        return model.operationalState === "IDLING";
+      }
+      if (activeFilter === "off") {
+        return model.operationalState === "OFF";
+      }
+      if (activeFilter === "coupled") {
+        return model.fifthWheelStatus === "COUPLED";
+      }
+      return true;
     }
 
     function flash(node) {
@@ -619,8 +558,8 @@
         });
         body.appendChild(fragment);
       },
-      afterPatch: function () {
-        applyFilter();
+      afterPatch: function (models) {
+        applyFilter(models);
         updateKpis();
       }
     });
@@ -883,68 +822,14 @@
       onSelectionChange(null);
     }
 
-    function applyFilter() {
-      var models = registry.models();
-      var presentation = boardPresentation(models, {
-        filter: activeFilter, search: boardSearch, sort: boardSort,
-        direction: boardSortDirection
-      });
-      var visible = new Set(presentation.rows.map(function (model) { return model.deviceId; }));
-      models.forEach(function (model) {
+    function applyFilter(models) {
+      (models || registry.models()).forEach(function (model) {
         var refs = domRows.get(model.deviceId);
         var row = refs && refs.row;
         if (row) {
-          row.hidden = !visible.has(model.deviceId);
+          row.hidden = !rowMatches(model);
         }
       });
-      // Move existing nodes only when their visible order actually changes.
-      // Normal Unit-sorted telemetry patches leave rows (and focus) in place.
-      var focused = body.contains(document.activeElement) ? document.activeElement : null;
-      var current = Array.from(body.children).filter(function (row) { return !row.hidden; });
-      presentation.rows.forEach(function (model, index) {
-        var row = domRows.get(model.deviceId).row;
-        if (current[index] !== row) {
-          body.insertBefore(row, current[index] || null);
-          current.splice(current.indexOf(row), 1);
-          current.splice(index, 0, row);
-        }
-      });
-      if (focused && !focused.hidden && document.activeElement !== focused) {
-        focused.focus({ preventScroll: true });
-      }
-      appRoot.querySelectorAll("[data-board-filter]").forEach(function (button) {
-        var key = button.getAttribute("data-board-filter");
-        var selected = key === activeFilter;
-        button.classList.toggle("siq-filter-button--active", selected);
-        button.setAttribute("aria-pressed", String(selected));
-        button.setAttribute("aria-label", FILTER_LABELS[key] + ", " + presentation.counts[key] + " units");
-        var count = button.querySelector("[data-filter-count]");
-        if (count) { count.textContent = String(presentation.counts[key]); }
-      });
-      appRoot.querySelectorAll('.siq-board-head [role="columnheader"]').forEach(function (header) {
-        var button = header.querySelector("[data-board-sort]");
-        if (!button) { return; }
-        var key = button.getAttribute("data-board-sort");
-        var selected = key === boardSort;
-        header.setAttribute("aria-sort", selected ? boardSortDirection : "none");
-        var next = selected && boardSortDirection === "ascending" ? "descending" : "ascending";
-        button.setAttribute("aria-label", "Sort by " + SORT_LABELS[key] + ", "
-          + (key === "report" ? (next === "ascending" ? "freshest first" : "oldest first") : next));
-        button.querySelector("[data-sort-arrow]").textContent = selected
-          ? (boardSortDirection === "ascending" ? "▲" : "▼") : "";
-      });
-      var status = byId("siq-board-status");
-      if (status) {
-        var statusText = "Showing " + presentation.rows.length + " of " + presentation.total
-          + " units" + (activeFilter !== "all" ? " · Filtered: " + FILTER_LABELS[activeFilter] : "")
-          + (boardSearch.trim() ? " · Search active" : "");
-        if (status.textContent !== statusText) { status.textContent = statusText; }
-        status.classList.toggle("siq-board-status--filtered", activeFilter !== "all" || Boolean(boardSearch.trim()));
-      }
-      var empty = byId("siq-board-no-matches");
-      if (empty) { empty.hidden = !models.length || Boolean(presentation.rows.length); }
-      var clear = byId("siq-board-search-clear");
-      if (clear) { clear.hidden = !boardSearch; }
     }
 
     function updateKpis(models) {
@@ -965,7 +850,7 @@
       var previousSelected = selectedDeviceId;
       registry.initialize(scopeKey, models || []);
       updateKpis(models || []);
-      applyFilter();
+      applyFilter(models || []);
       if (previousSelected && registry.has(previousSelected)) {
         selectedDeviceId = previousSelected;
         setSelectedRows();
@@ -1069,7 +954,6 @@
       currentFacility = null;
       domRows.clear();
       registry.initialize("cleared::" + clearedScopeSequence, []);
-      applyFilter();
       byId("siq-detail-drawer").classList.remove("siq-detail-drawer--open");
       document.querySelector(".siq-operations-layout")
         .classList.remove("siq-operations-layout--drawer-open");
@@ -1148,6 +1032,11 @@
       appRoot.querySelectorAll("[data-board-filter]").forEach(function (button) {
         button.addEventListener("click", function () {
           activeFilter = button.getAttribute("data-board-filter");
+          appRoot.querySelectorAll("[data-board-filter]").forEach(function (candidate) {
+            var selected = candidate === button;
+            candidate.classList.toggle("siq-filter-button--active", selected);
+            candidate.setAttribute("aria-pressed", String(selected));
+          });
           applyFilter();
         });
       });
@@ -1156,28 +1045,6 @@
         if (controller) {
           controller.refreshNow();
         }
-      });
-      var search = byId("siq-board-search");
-      if (search) {
-        search.addEventListener("input", function () {
-          boardSearch = search.value;
-          applyFilter();
-        });
-        byId("siq-board-search-clear").addEventListener("click", function () {
-          boardSearch = "";
-          search.value = "";
-          applyFilter();
-          search.focus();
-        });
-      }
-      appRoot.querySelectorAll("[data-board-sort]").forEach(function (button) {
-        button.addEventListener("click", function () {
-          var next = button.getAttribute("data-board-sort");
-          boardSortDirection = next === boardSort && boardSortDirection === "ascending"
-            ? "descending" : "ascending";
-          boardSort = next;
-          applyFilter();
-        });
       });
       byId("siq-live-customer-selector").addEventListener("change", function () {
         onCustomerScopeChange(this.value || null);
@@ -1193,7 +1060,10 @@
       initializeRows: initializeRows,
       applyReportResult: applyReportResult,
       patchRows: function (models) {
-        return registry.patch(models || []);
+        var mutations = registry.patch(models || []);
+        updateKpis(models || []);
+        applyFilter(models || []);
+        return mutations;
       },
       patchEngineHealth: function (deviceId, model) {
         if (!registry.has(deviceId) || !model || model.deviceId !== deviceId) {
@@ -1220,7 +1090,6 @@
 
   return {
     PATCH_FIELDS: PATCH_FIELDS,
-    boardPresentation: boardPresentation,
     createOperationsDomView: createOperationsDomView,
     createPersistentRowRegistry: createPersistentRowRegistry,
     operationalTelemetryPresentation: operationalTelemetryPresentation,
