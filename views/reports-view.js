@@ -11,6 +11,88 @@
 
   var MAX_RENDER_ROWS = 500;
 
+  function timeLabel(value) {
+    var parts = value.split(":");
+    var hour = Number(parts[0]);
+    return (hour % 12 || 12) + ":" + parts[1] + (hour < 12 ? " AM" : " PM");
+  }
+
+  function parseExactTime(value) {
+    var match = String(value).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+    if (!match) { return null; }
+    var hour = Number(match[1]);
+    var minute = Number(match[2]);
+    if (minute > 59 || hour > (match[3] ? 12 : 23) || match[3] && hour < 1) {
+      return null;
+    }
+    if (match[3]) { hour = hour % 12 + (match[3].toUpperCase() === "PM" ? 12 : 0); }
+    return String(hour).padStart(2, "0") + ":" + match[2];
+  }
+
+  function setTimeValue(document, id, value) {
+    var select = document.getElementById(id);
+    // Include the existing minute verbatim; merely rendering must never round it.
+    var options = [];
+    for (var minute = 0; minute < 1440; minute += 30) {
+      options.push(String(Math.floor(minute / 60)).padStart(2, "0") + ":"
+        + String(minute % 60).padStart(2, "0"));
+    }
+    if (value && options.indexOf(value) === -1) { options.push(value); }
+    options.sort();
+    select.replaceChildren();
+    options.forEach(function (time) {
+      var option = document.createElement("option");
+      option.value = time;
+      option.textContent = timeLabel(time);
+      select.appendChild(option);
+    });
+    select.value = value;
+    var exact = document.getElementById(id + "-exact");
+    exact.value = value ? timeLabel(value) : "";
+    exact.setCustomValidity("");
+  }
+
+  function createTimeControl(document, id, name) {
+    var wrapper = document.createElement("div");
+    wrapper.className = "siq-field siq-report-time";
+    var label = document.createElement("label");
+    label.className = "siq-visually-hidden";
+    label.htmlFor = id;
+    label.textContent = name + " Time";
+    var select = document.createElement("select");
+    select.id = id;
+    select.required = true;
+    var toggle = document.createElement("button");
+    toggle.id = id + "-toggle";
+    toggle.type = "button";
+    toggle.className = "siq-button siq-report-exact-toggle";
+    toggle.textContent = "Exact";
+    toggle.setAttribute("aria-label", name + " Exact Time");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-controls", id + "-manual");
+    var manual = document.createElement("div");
+    manual.id = id + "-manual";
+    manual.className = "siq-report-manual-time";
+    manual.hidden = true;
+    var exactLabel = document.createElement("label");
+    exactLabel.htmlFor = id + "-exact";
+    exactLabel.textContent = name + " Exact Time";
+    var exact = document.createElement("input");
+    exact.id = id + "-exact";
+    exact.type = "text";
+    exact.autocomplete = "off";
+    exact.placeholder = "6:17 AM";
+    exact.disabled = true;
+    var hint = document.createElement("span");
+    hint.id = id + "-hint";
+    hint.className = "siq-field-note";
+    hint.textContent = "Use 6:17 AM or 14:43 (24-hour).";
+    exact.setAttribute("aria-describedby", hint.id);
+    manual.append(exactLabel, exact, hint);
+    wrapper.append(label, select, toggle, manual);
+    return wrapper;
+  }
+
   var TITLES = Object.freeze({
     overview: "Overview",
     drivers: "Driver Productivity",
@@ -425,21 +507,23 @@
         endTime: byId("siq-report-live-end-time").value
       } };
     }
-    function setSelection(selection) {
+    function selectRange(key) {
+      ["today", "yesterday", "last-seven-days", "current-month", "previous-month"]
+        .forEach(function (name) {
+          byId("siq-report-" + name).setAttribute("aria-pressed", String(name === key));
+        });
+      byId("siq-report-custom").hidden = key !== "custom";
+    }
+    function setSelection(selection, preset) {
+      selectRange(preset || "custom");
       var custom = selection && selection.custom || {};
       byId("siq-report-live-start-date").value = custom.startDate || "";
-      byId("siq-report-live-start-time").value = custom.startTime || "";
+      setTimeValue(document, "siq-report-live-start-time", custom.startTime || "");
       byId("siq-report-live-end-date").value = custom.endDate || "";
-      byId("siq-report-live-end-time").value = custom.endTime || "";
+      setTimeValue(document, "siq-report-live-end-time", custom.endTime || "");
     }
     function setContext(nextContext) {
       context = nextContext;
-      byId("siq-report-live-customer").textContent = context && context.customer
-        ? context.customer.displayName : "Unavailable";
-      byId("siq-report-live-facility").textContent = context && context.facility
-        ? context.facility.displayName : "Unavailable";
-      byId("siq-report-live-timezone").textContent = context && context.facility
-        ? context.facility.timezone : "Unavailable";
     }
     function setActionsEnabled(enabled) {
       byId("siq-report-live-print").disabled = !enabled;
@@ -451,6 +535,7 @@
       load.textContent = loading ? "Loading Report..." : "Load Report";
       byId("siq-report-live-refresh").disabled = loading;
       byId("siq-report-today").disabled = loading;
+      byId("siq-report-yesterday").disabled = loading;
       byId("siq-report-last-seven-days").disabled = loading;
       byId("siq-report-current-month").disabled = loading;
       byId("siq-report-previous-month").disabled = loading;
@@ -888,6 +973,7 @@
       var isEvent = reportType === "moves" || reportType === "speed";
       var isEngineHours = reportType === "engineHours";
       byId("siq-report-today").hidden = isEngineHours;
+      byId("siq-report-yesterday").hidden = isEngineHours;
       byId("siq-report-last-seven-days").hidden = isEngineHours;
       byId("siq-report-current-month").hidden = !isEngineHours;
       byId("siq-report-previous-month").hidden = !isEngineHours;
@@ -908,6 +994,38 @@
     }
     function bind(nextController) {
       controller = nextController;
+      selectRange("today");
+      ["start", "end"].forEach(function (boundary) {
+        var id = "siq-report-live-" + boundary + "-time";
+        var select = byId(id);
+        var exact = byId(id + "-exact");
+        var manual = byId(id + "-manual");
+        var toggle = byId(id + "-toggle");
+        toggle.addEventListener("click", function () {
+          manual.hidden = !manual.hidden;
+          exact.disabled = manual.hidden;
+          toggle.setAttribute("aria-expanded", String(!manual.hidden));
+          // Cancelling an unfinished edit restores the authoritative selection.
+          exact.value = select.value ? timeLabel(select.value) : "";
+          exact.setCustomValidity("");
+          if (!manual.hidden) { exact.focus(); }
+        });
+        exact.addEventListener("input", function () {
+          var value = parseExactTime(exact.value);
+          var draft = exact.value;
+          if (value) { setTimeValue(document, id, value); }
+          exact.value = draft;
+          exact.setCustomValidity(value ? "" : "Enter a time such as 6:17 AM or 14:43.");
+          selectRange("custom");
+          controller.invalidateSelection();
+        });
+        select.addEventListener("change", function () {
+          setTimeValue(document, id, select.value);
+          manual.hidden = true;
+          exact.disabled = true;
+          toggle.setAttribute("aria-expanded", "false");
+        });
+      });
       byId("siq-report-live-form").addEventListener("submit", function (event) {
         event.preventDefault();
         controller.load(selectedWindow(), false);
@@ -916,6 +1034,7 @@
         "siq-report-live-end-date", "siq-report-live-end-time"]
         .forEach(function (id) {
           byId(id).addEventListener("change", function () {
+            selectRange("custom");
             controller.invalidateSelection();
           });
         });
@@ -923,15 +1042,23 @@
         controller.refresh();
       });
       byId("siq-report-today").addEventListener("click", function () {
+        selectRange("today");
         controller.today();
       });
+      byId("siq-report-yesterday").addEventListener("click", function () {
+        selectRange("yesterday");
+        controller.yesterday();
+      });
       byId("siq-report-last-seven-days").addEventListener("click", function () {
+        selectRange("last-seven-days");
         controller.lastSevenDays();
       });
       byId("siq-report-current-month").addEventListener("click", function () {
+        selectRange("current-month");
         controller.currentMonth();
       });
       byId("siq-report-previous-month").addEventListener("click", function () {
+        selectRange("previous-month");
         controller.previousMonth();
       });
       byId("siq-report-live-print").addEventListener("click", function () {
@@ -1033,6 +1160,9 @@
     csvDocument: csvDocument,
     csvEscape: csvEscape,
     createReportsDomView: createReportsDomView,
+    createTimeControl: createTimeControl,
+    parseExactTime: parseExactTime,
+    setTimeValue: setTimeValue,
     duration: duration,
     meterStatus: meterStatus,
     meterUnavailableNote: meterUnavailableNote,

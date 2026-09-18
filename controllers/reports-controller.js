@@ -59,6 +59,18 @@
     } };
   }
 
+  function yesterdaySelection(nowMs, timeZone) {
+    var today = selectionParts(nowMs, timeZone).date;
+    // Calendar arithmetic only; the canonical resolver converts each local
+    // midnight independently, including 23/25-hour DST days.
+    var previous = new Date(today + "T00:00:00Z");
+    previous.setUTCDate(previous.getUTCDate() - 1);
+    return { custom: {
+      startDate: previous.toISOString().slice(0, 10), startTime: "00:00",
+      endDate: today, endTime: "00:00"
+    } };
+  }
+
   function lastSevenDaysSelection(nowMs, timeZone) {
     var endMs = offsetEndMs(nowMs);
     var start = selectionParts(endMs - MAX_GENERAL_REPORT_MS, timeZone);
@@ -274,7 +286,7 @@
         view.setContext(context);
         if (context && context.facility && !lastSelection) {
           lastSelection = todaySelection(now(), context.facility.timezone);
-          view.setSelection(lastSelection);
+          view.setSelection(lastSelection, "today");
         }
       },
       clear: function () {
@@ -312,7 +324,15 @@
           return Promise.resolve(null);
         }
         var selection = todaySelection(now(), context.facility.timezone);
-        view.setSelection(selection);
+        view.setSelection(selection, "today");
+        return load(selection, false);
+      },
+      yesterday: function () {
+        if (!context || !context.facility) {
+          return Promise.resolve(null);
+        }
+        var selection = yesterdaySelection(now(), context.facility.timezone);
+        view.setSelection(selection, "yesterday");
         return load(selection, false);
       },
       lastSevenDays: function () {
@@ -320,7 +340,7 @@
           return Promise.resolve(null);
         }
         var selection = lastSevenDaysSelection(now(), context.facility.timezone);
-        view.setSelection(selection);
+        view.setSelection(selection, "last-seven-days");
         return load(selection, false);
       },
       currentMonth: function () {
@@ -328,7 +348,7 @@
           return Promise.resolve(null);
         }
         var selection = monthSelection(now(), context.facility.timezone, false);
-        view.setSelection(selection);
+        view.setSelection(selection, "current-month");
         return load(selection, false);
       },
       previousMonth: function () {
@@ -336,7 +356,7 @@
           return Promise.resolve(null);
         }
         var selection = monthSelection(now(), context.facility.timezone, true);
-        view.setSelection(selection);
+        view.setSelection(selection, "previous-month");
         return load(selection, false);
       },
       printReport: function () {
@@ -388,6 +408,7 @@
     createReportsController: createReportsController,
     lastSevenDaysSelection: lastSevenDaysSelection,
     monthSelection: monthSelection,
-    todaySelection: todaySelection
+    todaySelection: todaySelection,
+    yesterdaySelection: yesterdaySelection
   };
 }));

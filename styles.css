@@ -3784,25 +3784,52 @@
 /* Live Reports reuses the exact-window Performance result and compact surfaces. */
 .siq-live-report-command-bar {
   display: grid;
-  grid-template-columns: minmax(410px, 1fr) minmax(500px, 1.45fr) auto;
-  gap: 10px;
-  align-items: end;
-}
-
-.siq-live-report-context {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(125px, 1fr));
-  min-width: 0;
-}
-
-.siq-live-report-context .siq-timezone-block:first-child {
-  border-left: 0;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px 12px;
+  align-items: center;
+  padding: 8px 10px;
 }
 
 .siq-live-report-range {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(112px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  gap: 8px 24px;
+  align-items: start;
+  min-width: 0;
 }
+
+.siq-report-boundary {
+  display: grid;
+  grid-template-columns: 34px 150px 180px;
+  align-items: start;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.siq-report-boundary-label { padding-top: 10px; color: var(--siq-muted); font-size: 11px; font-weight: 800; }
+.siq-report-time { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+.siq-report-manual-time { display: grid; grid-column: 1 / -1; gap: 4px; }
+.siq-report-manual-time[hidden] { display: none; }
+.siq-report-shortcuts, .siq-report-output-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.siq-report-output-actions { justify-content: flex-end; }
+.siq-report-output-actions .siq-button { font-size: 11px; background: transparent; }
+.siq-report-custom-status { font-size: 11px; color: var(--siq-muted); padding: 0 4px; }
+.siq-report-shortcuts button[aria-pressed="true"] {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  border-color: var(--siq-accent);
+  font-weight: 800;
+}
+.siq-live-report-command-bar button,
+.siq-live-report-range input,
+.siq-live-report-range select { min-height: 36px; }
+.siq-live-report-range input,
+.siq-live-report-range select { width: 100%; min-width: 0; box-sizing: border-box; font-size: 13px; }
+.siq-report-exact-toggle { justify-self: start; font-size: 11px; padding: 5px 7px; background: transparent; }
 
 .siq-live-report-range .siq-field {
   min-width: 0;
@@ -3810,6 +3837,7 @@
 
 .siq-live-report-actions {
   margin-left: 0;
+  padding-bottom: 0;
 }
 
 .siq-report-tabs {
@@ -4091,10 +4119,6 @@
 }
 
 @media (max-width: 1180px) {
-  .siq-live-report-command-bar {
-    grid-template-columns: 1fr;
-  }
-
   .siq-live-report-actions {
     justify-content: flex-start;
   }
@@ -4105,10 +4129,24 @@
 }
 
 @media (max-width: 680px) {
-  .siq-live-report-context,
+  .siq-live-report-command-bar { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .siq-live-report-range {
-    grid-template-columns: 1fr 1fr;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
   }
+
+  .siq-report-boundary { grid-template-columns: minmax(0, 1fr); }
+  .siq-report-boundary-label { padding-top: 0; }
+  .siq-report-shortcuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .siq-live-report-actions { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; }
+  .siq-report-output-actions { justify-content: flex-start; }
+  .siq-live-report-command-bar button,
+  .siq-live-report-range input,
+  .siq-live-report-range select { min-height: 44px; }
+  .siq-live-report-range input,
+  .siq-live-report-range select { font-size: 16px; }
+  .siq-report-tab { min-height: 44px; }
 
   .siq-report-tabs {
     display: grid;

@@ -171,22 +171,14 @@
       }
       function field(labelText, id, type) {
         var wrapper = productionElement("div", "siq-field");
-        var label = productionElement("label", "", labelText);
+        var label = productionElement("label", "siq-visually-hidden", labelText);
         label.setAttribute("for", id);
         var control = identify(productionElement("input"), id);
         control.type = type;
+        control.required = true;
         wrapper.append(label, control);
         return wrapper;
       }
-      function contextValue(label, id) {
-        var block = productionElement("div", "siq-timezone-block");
-        block.append(
-          productionElement("span", "siq-analysis-label", label),
-          identify(productionElement("strong", "", "Unavailable"), id)
-        );
-        return block;
-      }
-
       var heading = productionElement("div", "siq-module-heading");
       var headingCopy = productionElement("div");
       headingCopy.append(
@@ -202,25 +194,34 @@
         productionElement("form", "siq-scope-bar siq-live-report-command-bar"),
         "siq-report-live-form"
       );
-      var context = productionElement("div", "siq-live-report-context");
-      context.append(
-        contextValue("Customer", "siq-report-live-customer"),
-        contextValue("Facility", "siq-report-live-facility"),
-        contextValue("Timezone", "siq-report-live-timezone")
-      );
-      var custom = productionElement("div", "siq-custom-range siq-live-report-range");
-      custom.append(
-        field("Start Date", "siq-report-live-start-date", "date"),
-        field("Start Time", "siq-report-live-start-time", "time"),
-        field("End Date", "siq-report-live-end-date", "date"),
-        field("End Time", "siq-report-live-end-time", "time")
-      );
+      var custom = productionElement("div", "siq-live-report-range");
+      ["Start", "End"].forEach(function (name, index) {
+        var id = "siq-report-live-" + name.toLowerCase();
+        var group = productionElement("div", "siq-report-boundary");
+        group.setAttribute("role", "group");
+        group.setAttribute("aria-labelledby", id + "-label");
+        group.append(identify(productionElement("span", "siq-report-boundary-label",
+          index === 0 ? "From" : "To"), id + "-label"));
+        var date = field(name + " Date", id + "-date", "date");
+        group.append(date, window.SIQ_REPORTS_VIEW.createTimeControl(document, id + "-time", name));
+        custom.append(group);
+      });
+      var shortcuts = productionElement("div", "siq-report-shortcuts");
+      shortcuts.setAttribute("role", "group");
+      shortcuts.setAttribute("aria-label", "Report range shortcuts");
       var actions = productionElement("div", "siq-scope-actions siq-live-report-actions");
       var today = identify(
         productionElement("button", "siq-button", "Today"),
         "siq-report-today"
       );
       today.type = "button";
+      var yesterday = identify(productionElement("button", "siq-button", "Yesterday"),
+        "siq-report-yesterday");
+      yesterday.type = "button";
+      var manual = identify(productionElement("span", "siq-report-custom-status", "Custom"),
+        "siq-report-custom");
+      manual.hidden = true;
+      manual.setAttribute("role", "status");
       var lastSevenDays = identify(
         productionElement("button", "siq-button", "Last 7 Days"),
         "siq-report-last-seven-days"
@@ -260,11 +261,11 @@
       );
       exportCsv.type = "button";
       exportCsv.disabled = true;
-      actions.append(
-        today, lastSevenDays, currentMonth, previousMonth,
-        load, refresh, print, exportCsv
-      );
-      form.append(context, custom, actions);
+      shortcuts.append(today, yesterday, lastSevenDays, currentMonth, previousMonth, manual);
+      var outputActions = productionElement("div", "siq-report-output-actions");
+      outputActions.append(print, exportCsv);
+      actions.append(load, refresh);
+      form.append(custom, shortcuts, actions, outputActions);
 
       var tabs = productionElement("div", "siq-report-tabs");
       tabs.setAttribute("role", "tablist");
