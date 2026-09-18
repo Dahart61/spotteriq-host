@@ -687,120 +687,6 @@
     return result;
   }
 
-  // TEMPORARY audit only: summarize already-loaded evidence without changing it.
-  function compactEngineOffAudit(device, data, window, options, operatingTimeline, unit) {
-    var capability = reportCapability(device, options);
-    var channels = {};
-    ["ignition", "rpm", "speed"].forEach(function (channel) {
-      channels[channel] = sorted(data[channel]).filter(function (r) { return Boolean(recordId(r)); });
-    });
-    var communication = channels.ignition.concat(channels.rpm, channels.speed).sort(function (a, b) {
-      return recordTime(a) - recordTime(b);
-    });
-    var latch = historicalIgnitionSamples(data.ignition, (data.rpm || []).concat(data.speed || []), HISTORICAL_CONTINUITY_MAX_GAP_MS);
-    function last(records, ms, sample) {
-      var low = 0, high = records.length - 1, found = null;
-      while (low <= high) {
-        var mid = Math.floor((low + high) / 2);
-        var t = sample ? Date.parse(records[mid].timestamp) : recordTime(records[mid]);
-        if (t <= ms) { found = records[mid]; low = mid + 1; } else { high = mid - 1; }
-      }
-      return found;
-    }
-    var evidence = [], evidenceKeys = new Map();
-    function ref(channel, record) {
-      if (!record) { return null; }
-      var key = channel + ":" + recordId(record);
-      if (!evidenceKeys.has(key)) {
-        evidenceKeys.set(key, evidence.length);
-        evidence.push([channel, recordId(record), valueOf(record, "dateTime", "DateTime"),
-          channel === "speed" ? valueOf(record, "speed", "Speed") : valueOf(record, "data", "Data")]);
-      }
-      return evidenceKeys.get(key);
-    }
-    function commRef(record) {
-      if (!record) { return null; }
-      var channel = channels.ignition.indexOf(record) !== -1 ? "ignition"
-        : channels.rpm.indexOf(record) !== -1 ? "rpm" : "speed";
-      return ref(channel, record);
-    }
-    var priorState = null;
-    var startMs = Date.parse(window.startUtc);
-    if (communication.length && recordTime(communication[0]) < startMs) {
-      var history = buildReportTimeline(device, data, {
-        startUtc: new Date(recordTime(communication[0])).toISOString(), endUtc: window.startUtc
-      }, options);
-      history.intervals.forEach(function (i) {
-        if (i.state !== "UNKNOWN" && i.state !== "NOT_COMMUNICATING") {
-          priorState = [i.state, i.endUtc];
-        }
-      });
-    }
-    var gaps = [], totals = {};
-    operatingTimeline.intervals.forEach(function (interval) {
-      if (interval.state !== "UNKNOWN" && interval.state !== "NOT_COMMUNICATING") {
-        priorState = [interval.state, interval.endUtc];
-        return;
-      }
-      var begin = Date.parse(interval.startUtc), end = Date.parse(interval.endUtc);
-      var initialComm = last(communication, begin);
-      var cutoff = initialComm ? recordTime(initialComm) + HISTORICAL_CONTINUITY_MAX_GAP_MS : null;
-      var points = [begin];
-      if (cutoff > begin && cutoff < end) { points.push(cutoff); }
-      points.push(end);
-      for (var index = 0; index < points.length - 1; index += 1) {
-        var at = points[index], until = points[index + 1];
-        var native = last(channels.ignition, at), rpm = last(channels.rpm, at);
-        var comm = last(communication, at), held = last(latch, at, true);
-        var validNative = native && booleanLevel(valueOf(native, "data", "Data")) !== null;
-        var continuous = Boolean(comm && at - recordTime(comm) < HISTORICAL_CONTINUITY_MAX_GAP_MS);
-        var heldContinuous = Boolean(held && at - Date.parse(held.timestamp) < HISTORICAL_CONTINUITY_MAX_GAP_MS);
-        var category;
-        if (interval.reasonCode === "IGNITION_RPM_CONFLICT") { category = "conflict"; }
-        else if (native && !validNative) { category = "malformed_native"; }
-        else if (!comm) { category = "no_stored_evidence"; }
-        else if (!continuous || (native && !heldContinuous)) { category = "continuity_loss"; }
-        else if (/STALE$/.test(interval.reasonCode || "")) {
-          category = validNative && heldContinuous && held.value === false
-            ? "freshness_known_off" : "freshness_uncertain";
-        } else { category = "other_" + interval.reasonCode; }
-        var duration = until - at;
-        totals[category] = (totals[category] || 0) + duration;
-        var previous = gaps[gaps.length - 1];
-        if (previous && previous.end === new Date(at).toISOString() && previous.cause === category) {
-          previous.end = new Date(until).toISOString(); previous.ms += duration;
-          if (previous.reasons.indexOf(interval.reasonCode) === -1) { previous.reasons.push(interval.reasonCode); }
-        } else {
-          gaps.push({ start: new Date(at).toISOString(), end: new Date(until).toISOString(), ms: duration,
-            cause: category, reasons: [interval.reasonCode], priorState: priorState,
-            ignition: ref("ignition", native), rpm: ref("rpm", rpm), communication: commRef(comm),
-            held: held ? [held.timestamp, held.value] : null, within25h: continuous && (!native || heldContinuous) });
-        }
-      }
-    });
-    gaps.forEach(function (gap) {
-      var end = Date.parse(gap.end);
-      gap.closing = [];
-      Object.keys(channels).forEach(function (channel) {
-        var r = last(channels[channel], end);
-        if (r && recordTime(r) === end) { gap.closing.push(ref(channel, r)); }
-      });
-    });
-    var fresh = gaps.filter(function (gap) { return /^freshness_/.test(gap.cause); });
-    return { version: "compact2", deviceId: device.deviceId, name: device.displayName, window: window,
-      capability: capability, continuityMs: HISTORICAL_CONTINUITY_MAX_GAP_MS,
-      metrics: { running: unit.engineRunningMinutes, engineOff: unit.engineOffMinutes,
-        keyOn: unit.keyOnMinutes, unavailable: unit.stoppedMinutes, moving: unit.movingMinutes,
-        stationary: unit.idleMinutes, moves: unit.moveCount, fuel: unit.fuelGallons, maxSpeed: unit.maxSpeedMph },
-      totalsMs: totals, freshnessGapCount: fresh.length,
-      longestFreshnessMs: fresh.reduce(function (m, gap) { return Math.max(m, gap.ms); }, 0),
-      preWindowIgnition: ref("ignition", last(channels.ignition, startMs - 1)),
-      counts: Object.keys(channels).map(function (channel) {
-        return [channel, channels[channel].length, (data[channel] || []).length - channels[channel].length];
-      }),
-      evidenceSchema: ["channel", "storedId", "timestamp", "value"], evidence: evidence, gaps: gaps };
-  }
-
   function analyzeUnit(device, data, window, options) {
     var capable = device.fifthWheelCapabilityGroupMember === true;
     var operatingTimeline = buildReportTimeline(device, data, window, options);
@@ -916,18 +802,6 @@
       value: activity,
       enumerable: false
     });
-    if (typeof location !== "undefined" && /(?:\?|&)siqEngineOffAudit=2(?:&|$)/.test(location.search)
-      && /\(YT-[1-8]\)/.test(device.displayName || "")
-      && options && options.facility && options.facility.id === "facility-bjs-burlington-nj"
-      && window.startUtc === "2026-09-18T04:00:00.000Z" && window.endUtc === "2026-09-18T14:33:00.000Z") {
-      try {
-        var compactAudit = JSON.stringify(compactEngineOffAudit(device, data, window, options, operatingTimeline, unit));
-        for (var offset = 0; offset < compactAudit.length; offset += 5000) {
-          console.info("SIQ_OFF_COMPACT2 " + JSON.stringify({ deviceId: device.deviceId,
-            offset: offset, length: compactAudit.length, chunk: compactAudit.slice(offset, offset + 5000) }));
-        }
-      } catch (auditError) { console.warn("SIQ_OFF_COMPACT2_FAILED " + auditError.message); }
-    }
     return unit;
   }
 
@@ -995,7 +869,6 @@
   }
 
   return {
-    compactEngineOffAudit: compactEngineOffAudit,
     ENGINE_RUNNING_RPM: ENGINE_RUNNING_RPM,
     HISTORICAL_CONTINUITY_MAX_GAP_HOURS: HISTORICAL_CONTINUITY_MAX_GAP_HOURS,
     HISTORICAL_CONTINUITY_MAX_GAP_MS: HISTORICAL_CONTINUITY_MAX_GAP_MS,
